@@ -1,0 +1,14 @@
+server:
+  port: ${PORT:8090}
+workspace:
+  service-url: ${WORKSPACE_SERVICE_URL:http://127.0.0.1:8081}
+spring:
+  application:
+    name: workspace-gateway
+  cloud:
+    gateway:
+      server:
+        webflux:
+          httpclient:
+            connect-timeout: 5000
+            response-timeout: 65s

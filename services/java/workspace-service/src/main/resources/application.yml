@@ -1,0 +1,35 @@
+server:
+  port: ${PORT:8081}
+spring:
+  application:
+    name: workspace-service
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3307/workspace?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC}
+    username: ${MYSQL_USER:workspace}
+    password: ${MYSQL_PASSWORD}
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6380}
+      password: ${REDIS_PASSWORD}
+      timeout: 3s
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    username: ${RABBITMQ_USER:workspace}
+    password: ${RABBITMQ_PASSWORD:workspace}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+workspace:
+  config-key: ${WORKSPACE_CONFIG_KEY:}
+  model-api-hosts: ${MODEL_API_ALLOWED_HOSTS:ws-fhr1u2m9mysymhf3.cn-beijing.maas.aliyuncs.com,dashscope.aliyuncs.com,api.moonshot.cn,api.openai.com}
+  jwt-secret: ${WORKSPACE_JWT_SECRET}
+  internal-token: ${WORKSPACE_INTERNAL_TOKEN}
+  runtime-url: ${RUNTIME_URL:http://127.0.0.1:8000}
+  bootstrap-user: ${BOOTSTRAP_USER:admin}
+  bootstrap-password: ${BOOTSTRAP_PASSWORD:}
+  cookie-secure: ${COOKIE_SECURE:false}
+  origins: ${WORKSPACE_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080,http://localhost:8090}
+  queue-name: ${TASK_QUEUE_NAME:enterprise.tasks}
+  dispatch-enabled: ${DISPATCH_ENABLED:true}

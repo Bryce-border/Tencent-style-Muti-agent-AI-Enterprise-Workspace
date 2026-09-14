@@ -1,0 +1,75 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: workspace
+      MYSQL_USER: workspace
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Run init-r2-env.ps1 first}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Run init-r2-env.ps1 first}
+    ports: ["127.0.0.1:3307:3306"]
+    volumes: ["workspace_mysql:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+  redis:
+    image: redis:7.4
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Run init-r2-env.ps1 first}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes"]
+    ports: ["127.0.0.1:6380:6379"]
+    volumes: ["workspace_redis:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  workspace-service:
+    build: ../services/java/workspace-service
+    env_file: [.env.r2]
+    environment:
+      MYSQL_URL: jdbc:mysql://mysql:3306/workspace?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RABBITMQ_HOST: rabbitmq
+      RUNTIME_URL: http://agent-runtime:8000
+    ports: ["127.0.0.1:8081:8081"]
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+  gateway:
+    build: ../services/java/gateway
+    environment:
+      WORKSPACE_SERVICE_URL: http://workspace-service:8081
+    ports: ["127.0.0.1:8090:8090"]
+    depends_on: [workspace-service]
+    restart: unless-stopped
+  agent-runtime:
+    env_file: [.env, .env.r2]
+    environment:
+      WORKSPACE_SERVICE_URL: http://workspace-service:8081
+    ports: !override ["127.0.0.1:8000:8000"]
+  agent-worker:
+    env_file: [.env, .env.r2]
+    environment:
+      WORKSPACE_SERVICE_URL: http://workspace-service:8081
+    depends_on:
+      workspace-service: {condition: service_started}
+  workspace:
+    build:
+      context: ../apps/workspace
+      dockerfile: Dockerfile.runtime
+    ports: !override ["127.0.0.1:8080:80"]
+    depends_on: [gateway]
+  rabbitmq:
+    ports: !override ["127.0.0.1:5672:5672", "127.0.0.1:15672:15672"]
+  elasticsearch:
+    ports: !override ["127.0.0.1:9200:9200"]
+volumes:
+  workspace_mysql:
+  workspace_redis:

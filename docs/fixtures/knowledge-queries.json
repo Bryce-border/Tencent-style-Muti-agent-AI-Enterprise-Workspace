@@ -1,0 +1,17 @@
+[
+  {"query": "差旅报销需在多少天内提交？", "expected": "sim-travel-2026"},
+  {"query": "出差回公司后最晚什么时候交发票？", "expected": "sim-travel-2026"},
+  {"query": "去上海出差住酒店一晚可以报多少钱？", "expected": "sim-travel-2026"},
+  {"query": "年假", "expected": "sim-leave-2026"},
+  {"query": "我工作12年了，今年能休几天带薪假？", "expected": "sim-leave-2026"},
+  {"query": "买一台8000元的电脑需要谁批准？", "expected": "sim-procurement-2026"},
+  {"query": "采购达到多少金额需要三家供应商报价？", "expected": "sim-procurement-2026"},
+  {"query": "可以把客户名单发到个人邮箱吗？", "expected": "sim-security-2026"},
+  {"query": "发现客户资料泄露后多久需要上报？", "expected": "sim-security-2026"},
+  {"query": "新人入职前应该什么时候申请开通邮箱？", "expected": "sim-onboarding-2026"},
+  {"query": "仅根据以下事实写周报：本周完成了工作台，下周开发会议管理。", "expected": null},
+  {"query": "火星探测器的轨道参数怎么算？", "expected": null},
+  {"query": "番茄炒鸡蛋怎么做？", "expected": null},
+  {"query": "量子纠缠的贝尔不等式如何推导？", "expected": null},
+  {"query": "今年中秋节天气会下雨吗？", "expected": null}
+]

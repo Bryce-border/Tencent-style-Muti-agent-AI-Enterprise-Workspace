@@ -11,6 +11,7 @@ export interface Citation {
   content?: string;
   documentId?: string;
   score?: number;
+  metadata?: { file_document_id?: string; version?: number; filename?: string };
 }
 export interface Step {
   node_id: string;

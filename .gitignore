@@ -12,3 +12,4 @@
 **/target/
 .tools/
 deploy/backups/
+apps/desktop/profile/

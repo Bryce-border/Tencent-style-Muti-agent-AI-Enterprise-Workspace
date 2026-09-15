@@ -163,6 +163,7 @@ class WorkspaceRuntime:
             if input_only(task.prompt):
                 emit("knowledge.skipped", {"reason": "user_input_only"})
             else:
+                emit("knowledge.started", {"query": task.prompt})
                 citations = await KnowledgeStore(self.knowledge_settings).search(task.workspace_id, task.prompt, 5)
                 emit("knowledge.retrieved", {"count": len(citations)})
         except Exception as exc:
@@ -206,7 +207,8 @@ class WorkspaceRuntime:
             data={"mode": "crewai", "plan_source": plan_source, "output": output, "retrieval_version": 2, "retrieval_candidates": citations,
                   "node_results": list(results.values()), "review": {"decision": "REVISE", "feedback": "自动审核尚未完成，请人工检查成果。"}},
             citations=cited_sources(output, citations), next_action="REVIEW_DELIVERABLE")
-        emit("review.started", {"employee_id": "ai_assistant"})
+        emit("review.started", {"employee_id": "ai_assistant", "round": 1})
+        review_stage = "review"
         try:
             review = await asyncio.wait_for(asyncio.to_thread(self._call, "ai_assistant",
                 common + "\n审核以下交付：检查是否回答目标、遵守字数与格式、是否伪造来源或声称完成未执行操作。\n" + output,
@@ -214,19 +216,26 @@ class WorkspaceRuntime:
             if review.decision == "REVISE":
                 emit("review.feedback", {"round": 1, "feedback": review.feedback})
                 check_cancelled()
+                review_stage = "revision"
+                emit("revision.started", {"employee_id": "document_expert", "round": 1, "feedback": review.feedback})
                 output = await asyncio.to_thread(self._call, "document_expert",
                     common + "\n请修订交付。原稿：\n" + output + "\n审核意见：" + review.feedback,
                     "修订后的完整 Markdown 成果，保留真实来源，明确未完成事项。")
                 task.result.data["output"] = output
                 task.result.citations = cited_sources(output, citations)
+                emit("revision.completed", {"employee_id": "document_expert", "round": 1, "output": output,
+                                            "citations": task.result.citations})
                 check_cancelled()
+                review_stage = "recheck"
+                emit("review.started", {"employee_id": "ai_assistant", "round": 2})
                 review = await asyncio.wait_for(asyncio.to_thread(self._call, "ai_assistant",
                     common + "\n复核修订稿：\n" + output,
                     "JSON 对象含 decision（PASS 或 REVISE）和 feedback。", Review), timeout=60)
         except Exception as exc:
-            emit("review.unavailable", {"reason": type(exc).__name__, "message": "审核未完成，成果已保留，等待人工检查"})
+            emit("review.unavailable", {"reason": type(exc).__name__, "stage": review_stage,
+                                        "message": "审核未完成，成果已保留，等待人工检查"})
             return task.result
-        emit("review.completed", review.model_dump())
+        emit("review.completed", {**review.model_dump(), "round": 2 if review_stage == "recheck" else 1})
         check_cancelled()
         status = "SUCCESS" if review.decision == "PASS" else "PENDING_CONFIRMATION"
         return TaskResult(task_id=task.task_id, agent=task.employee_id, status=status,

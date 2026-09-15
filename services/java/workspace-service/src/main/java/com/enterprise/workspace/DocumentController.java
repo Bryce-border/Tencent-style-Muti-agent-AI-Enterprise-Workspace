@@ -20,7 +20,7 @@ public class DocumentController {
     @PostMapping("/{id}/archive") Object archive(@AuthenticationPrincipal Identity actor,@PathVariable String id,@RequestBody Map<String,Boolean> body) {return documents.archive(actor,id,Boolean.TRUE.equals(body.get("archived")));}
     @GetMapping("/{id}/versions/{version}/download") ResponseEntity<byte[]> download(@AuthenticationPrincipal Identity actor,@PathVariable String id,@PathVariable int version) {
         return ResponseEntity.ok().header("Content-Type","application/octet-stream").header("X-Content-Type-Options","nosniff")
-            .header("Content-Disposition","attachment; filename=\""+id.replaceAll("[^a-zA-Z0-9_-]","")+"-v"+version+"\"")
+            .header("Content-Disposition",org.springframework.http.ContentDisposition.attachment().filename(documents.filename(id,version,actor.workspaceId()),java.nio.charset.StandardCharsets.UTF_8).build().toString())
             .body(documents.download(id,version,actor.workspaceId()));
     }
 }

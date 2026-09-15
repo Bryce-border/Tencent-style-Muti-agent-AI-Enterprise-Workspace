@@ -13,7 +13,8 @@ if (Test-Path -LiteralPath $destination) {
         [System.IO.File]::AppendAllText($destination, "`nWORKSPACE_CONFIG_KEY=$(New-WorkspaceSecret)`n", [System.Text.UTF8Encoding]::new($false))
     }
     if ($existing -notmatch '(?m)^MINIO_ACCESS_KEY=') {
-        [System.IO.File]::AppendAllText($destination, "MINIO_ACCESS_KEY=workspace$(New-WorkspaceSecret).Substring(0,8)`nMINIO_SECRET_KEY=$(New-WorkspaceSecret)`n", [System.Text.UTF8Encoding]::new($false))
+        $access = 'workspace' + (New-WorkspaceSecret).Substring(0,8)
+        [System.IO.File]::AppendAllText($destination, "MINIO_ACCESS_KEY=$access`nMINIO_SECRET_KEY=$(New-WorkspaceSecret)`n", [System.Text.UTF8Encoding]::new($false))
     }
     Write-Output 'Existing credentials preserved; missing model encryption key initialized.'
     exit 0

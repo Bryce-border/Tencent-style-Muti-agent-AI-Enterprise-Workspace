@@ -9,6 +9,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice
 public class ApiErrors {
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class) ResponseEntity<?> oversized() {
+        return ResponseEntity.status(413).body(Map.of("detail","文件超过5MB限制"));
+    }
     @ExceptionHandler(ResponseStatusException.class) ResponseEntity<?> known(ResponseStatusException e) {
         return ResponseEntity.status(e.getStatusCode()).body(Map.of("detail",e.getReason()==null ? "请求失败" : e.getReason()));
     }

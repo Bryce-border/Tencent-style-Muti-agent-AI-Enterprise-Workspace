@@ -44,6 +44,8 @@ import { useSession, SessionControls } from "./auth";
 import { Members } from "./members";
 import { ModelSettings } from "./model-settings";
 import { Documents } from "./documents";
+import { Workflow } from "./workflow";
+import { eventNames } from "./workflow-model";
 import { Button } from "./components/ui/button";
 import type {
   Citation,
@@ -289,7 +291,7 @@ export function App() {
             <ShieldCheck size={12} />
             本地开发环境
           </span>
-          <span>Enterprise Workspace · 0.3</span>
+          <span>Enterprise Workspace · 0.4</span>
         </footer>
       </div>
     </div>
@@ -381,6 +383,7 @@ function Overview() {
             { to: "/employees", name: "AI 员工", icon: Users, color: "green" },
             { to: "/tasks", name: "任务中心", icon: CheckCheck, color: "blue" },
             { to: "/knowledge", name: "知识库", icon: Library, color: "rose" },
+            { to: "/documents", name: "文档中心", icon: FileText, color: "blue" },
             {
               to: "/reports",
               name: "报告",
@@ -835,7 +838,8 @@ function TaskDetail() {
             </Button>
           </div>
         )}
-      <div className="execution-layout">
+      <Workflow task={current} events={activity} error={events.error} loading={events.loading} />
+      <div className="execution-layout with-workflow">
         <section className="delivery">
           <div className="tabs" role="tablist" aria-label="工作详情">
             <button
@@ -890,6 +894,7 @@ function TaskDetail() {
                     <details key={index}>
                       <summary>{source.title || source.documentId}{source.chunkId ? ` · ${source.chunkId}` : ""}</summary>
                       <p>{source.content}</p>
+                      {source.metadata?.file_document_id && <Link to={`/documents?id=${encodeURIComponent(source.metadata.file_document_id)}`}>查看来源文档 · v{source.metadata.version}</Link>}
                     </details>
                   ))}
                 </div>
@@ -916,57 +921,13 @@ function TaskDetail() {
             </div>
           )}
         </section>
-        <aside className="execution-sidebar">
-          <h2>协作流程</h2>
-          {!current.plan.length && <p className="muted">尚未生成计划</p>}
-          {current.plan.map((step) => {
-            const done = events.data?.some(
-              (e) =>
-                e.type === "agent.node.completed" &&
-                e.payload.node_id === step.node_id,
-            );
-            const started = events.data?.some(
-              (e) =>
-                e.type === "agent.node.started" &&
-                e.payload.node_id === step.node_id,
-            );
-            return (
-              <div className={`step ${done ? "done" : ""}`} key={step.node_id}>
-                <span>
-                  {done ? (
-                    <Check size={14} />
-                  ) : started && current.status === "RUNNING" ? (
-                    <LoaderCircle className="spin" size={14} />
-                  ) : (
-                    <Bot size={14} />
-                  )}
-                </span>
-                <div>
-                  <strong>{step.employee_id || step.agent}</strong>
-                  <p>{step.objective || step.node_id}</p>
-                  {step.depends_on.length > 0 && (
-                    <small>依赖：{step.depends_on.join(", ")}</small>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-          {current.status === "SUCCESS" &&
-            current.result?.data.mode === "crewai" && (
-              <Button asChild variant="outline">
-                <Link to={`/reports/${encoded}`}>
-                  <FileBarChart2 size={15} />
-                  归档报告
-                </Link>
-              </Button>
-            )}
-        </aside>
       </div>
     </>
   );
 }
 
 function eventName(value: string) {
+  if (eventNames[value]) return eventNames[value];
   const names: Record<string, string> = {
     "task.created": "工作已创建",
     "task.started": "开始执行",
@@ -1063,7 +1024,7 @@ function Knowledge() {
   }
   return (
     <>
-      <PageHeading title="企业知识库" subtitle="default" />
+      <PageHeading title="企业知识库" subtitle="当前工作空间的文档与制度" />
       <form className="knowledge-search" onSubmit={search}>
         <div className="search-field">
           <Search size={18} />
@@ -1104,6 +1065,7 @@ function Knowledge() {
               </div>
               <p>{result.content}</p>
               <small>{result.documentId}</small>
+              {result.metadata?.file_document_id && <p><Link to={`/documents?id=${encodeURIComponent(result.metadata.file_document_id)}`}>查看来源文档 · v{result.metadata.version}</Link></p>}
             </article>
           ))}
         </div>
@@ -1220,7 +1182,7 @@ function Admin() {
           </div>
           <div>
             <dt>API 密钥</dt>
-            <dd>由部署环境管理</dd>
+            <dd>支持空间独立配置，密钥加密保存</dd>
           </div>
           <div>
             <dt>访问控制</dt>
@@ -1246,8 +1208,8 @@ function Admin() {
             [
               FileText,
               "Documents",
-              "文件上传、解析、预览与知识库索引",
-              "待开发",
+              "文件上传、原文件下载、文本预览、版本与知识索引",
+              "已接入",
             ],
             [
               CalendarDays,

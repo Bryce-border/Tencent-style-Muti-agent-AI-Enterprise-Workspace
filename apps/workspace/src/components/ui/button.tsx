@@ -29,7 +29,7 @@ export const Button = React.forwardRef<HTMLButtonElement, Props>(
     return (
       <Component
         ref={ref}
-        className={cn(variants({ variant, size, className }))}
+        className={cn("workspace-button", variants({ variant, size, className }))}
         {...props}
       />
     );

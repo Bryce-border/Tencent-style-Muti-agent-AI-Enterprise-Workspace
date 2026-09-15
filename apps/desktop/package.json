@@ -1,0 +1,10 @@
+{
+  "name": "enterprise-workspace-desktop",
+  "version": "0.4.0",
+  "private": true,
+  "main": "main.cjs",
+  "description": "Enterprise Workspace desktop client",
+  "author": "Enterprise Workspace",
+  "scripts": {"start":"electron .", "package":"node package.cjs"},
+  "devDependencies": {"electron":"44.3.0", "@electron/packager":"20.3.0"}
+}

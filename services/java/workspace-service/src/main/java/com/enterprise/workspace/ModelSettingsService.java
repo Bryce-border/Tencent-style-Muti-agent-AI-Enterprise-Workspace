@@ -107,7 +107,13 @@ public class ModelSettingsService {
     public Map<String,Object> test(Identity actor,JsonNode body) {
         var values=candidate(actor,body); long started=System.nanoTime();
         try {
-            var payload=Map.of("model",values.get("model"),"messages",List.of(Map.of("role","user","content","Reply with OK.")),"max_tokens",16,"stream",false);
+            var payload=new LinkedHashMap<String,Object>();
+            payload.put("model",values.get("model"));
+            payload.put("messages",List.of(Map.of("role","user","content","Reply with OK.")));
+            payload.put("max_tokens",values.get("max_tokens"));
+            payload.put("stream",false);
+            if(!values.get("model").toString().toLowerCase(Locale.ROOT).startsWith("kimi-k3"))
+                payload.put("temperature",values.get("temperature"));
             var request=HttpRequest.newBuilder(URI.create(values.get("base_url")+"/chat/completions")).timeout(Duration.ofSeconds(20))
                 .header("Authorization","Bearer "+values.get("api_key")).header("Content-Type","application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(payload))).build();

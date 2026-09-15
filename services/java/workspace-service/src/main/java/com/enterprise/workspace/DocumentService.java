@@ -33,6 +33,7 @@ public class DocumentService {
     public Map<String,Object> detail(String id,String space) {
         var value=owned(id,space,false);
         value.put("versions",db.queryForList("SELECT version,filename,byte_size,status,extracted_text,chunk_count,error,created_at FROM document_versions WHERE document_id=? ORDER BY version DESC",id));
+        value.put("status",db.queryForObject("SELECT status FROM document_versions WHERE document_id=? AND version=?",String.class,id,value.get("latest_version")));
         return value;
     }
     private void idle(String id) {
@@ -66,6 +67,11 @@ public class DocumentService {
         if(rows.isEmpty()) throw new ResponseStatusException(NOT_FOUND,"文档版本不存在");
         var body=json.createObjectNode().put("workspace_id",space).put("document_id",id).put("object_key",(String)rows.getFirst().get("object_key"));
         return Base64.getDecoder().decode(runtime.call("/v1/files/download",body).path("content_base64").asText());
+    }
+    public String filename(String id,int version,String space) {
+        owned(id,space,false);
+        var rows=db.queryForList("SELECT filename FROM document_versions WHERE document_id=? AND version=?",String.class,id,version);
+        if(rows.isEmpty()) throw new ResponseStatusException(NOT_FOUND,"文档版本不存在");return rows.getFirst();
     }
     @Transactional public Object retry(Identity actor,String id) {
         actor.requireWrite();var doc=owned(id,actor.workspaceId(),true);idle(id);

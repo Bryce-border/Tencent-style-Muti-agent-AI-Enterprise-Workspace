@@ -32,6 +32,7 @@ class FoundationTests {
     @Autowired TaskRepository tasks;
     @Autowired JdbcTemplate db;
     @Autowired ModelSettingsService models;
+    @Autowired DocumentService documents;
     @MockitoBean StringRedisTemplate redis;
     @MockitoBean RuntimeClient runtime;
     private final Map<String,String> sessions=new ConcurrentHashMap<>();
@@ -205,5 +206,22 @@ class FoundationTests {
             mvc.perform(post("/v1/model-settings/test").cookie(a.cookie()).header("X-Workspace-Request","1").contentType("application/json").content(body.toString())).andExpect(status().isBadRequest());
         }
         verifyNoInteractions(runtime);
+    }
+
+    @Test void documentsEnforceTenantBoundariesAndKeepVersionsOnFailure() throws Exception {
+        var a=account();var b=account();
+        when(runtime.call(eq("/v1/files/store"),any())).thenReturn(json.createObjectNode().put("object_key","test/object").put("byte_size",12));
+        var file=new org.springframework.mock.web.MockMultipartFile("file","policy.txt","text/plain","Reimburse in 30 days".getBytes());
+        var response=mvc.perform(multipart("/v1/documents").file(file).cookie(a.cookie()).header("X-Workspace-Request","1")).andExpect(status().isOk()).andReturn();
+        String id=json.readTree(response.getResponse().getContentAsString()).path("id").asText();
+        for(String suffix:List.of("","/versions/1/download")) mvc.perform(get("/v1/documents/"+id+suffix).cookie(b.cookie())).andExpect(status().isNotFound());
+        mvc.perform(multipart("/v1/documents/"+id+"/versions").file(file).cookie(b.cookie()).header("X-Workspace-Request","1")).andExpect(status().isNotFound());
+        mvc.perform(multipart("/v1/documents/"+id+"/versions").file(file).cookie(a.cookie()).header("X-Workspace-Request","1")).andExpect(status().isConflict());
+        db.update("UPDATE document_versions SET status='FAILED' WHERE document_id=?",id);
+        mvc.perform(post("/v1/documents/"+id+"/retry").cookie(a.cookie()).header("X-Workspace-Request","1")).andExpect(status().isOk());
+        db.update("UPDATE document_versions SET status='READY' WHERE document_id=?",id);db.update("UPDATE documents SET active_version=1 WHERE id=?",id);
+        mvc.perform(multipart("/v1/documents/"+id+"/versions").file(file).cookie(a.cookie()).header("X-Workspace-Request","1")).andExpect(status().isOk()).andExpect(jsonPath("$.latest_version").value(2)).andExpect(jsonPath("$.active_version").value(1));
+        mvc.perform(multipart("/v1/documents").file(new org.springframework.mock.web.MockMultipartFile("file","bad.exe","application/octet-stream",new byte[]{1})).cookie(a.cookie()).header("X-Workspace-Request","1")).andExpect(status().isBadRequest());
+        mvc.perform(get("/v1/documents").cookie(b.cookie())).andExpect(content().json("[]"));
     }
 }

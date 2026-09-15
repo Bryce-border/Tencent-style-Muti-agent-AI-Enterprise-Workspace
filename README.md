@@ -1,109 +1,251 @@
 # AI Enterprise Workspace
 
-## 当前入口：R2 企业基础
+基于 CrewAI 的企业多智能体工作空间，采用 React + Java 21 + Python 双服务架构，提供 AI 员工协作、知识检索、文档管理与报告交付。需求基线为 [AI Enterprise Workspace 项目描述](AI%20Enterprise%20Workspace%20项目描述.md)。
 
-主入口：<http://localhost:8080>。已接入 Java 21、Spring Boot 3.5.16、Spring Cloud 2025.0.3、MySQL、Redis，以及登录/空间权限、成员管理、任务执行租约和故障恢复。React、网关、Java/Python 服务均可 Docker 部署。Vite 联调入口仍为 <http://localhost:5173>。
+当前已完成文档中心、模型/API 配置、桌面入口和动态协作流程图。会议行动项、真实数据计算、OCR 与外部 MCP 写入按 [重开发路线](docs/重开发路线.md) 推进。
+
+## 快速启动：本机已有部署
+
+先打开 **Docker Desktop**，等待引擎运行，再任选一种方式启动。
+
+### 桌面应用
+
+双击桌面的 **Enterprise Workspace** 快捷方式，或在 PowerShell 中执行：
+
+```powershell
+Set-Location 'F:\project\Tencent-style Muti-agent AI Enterprise Workspace'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\启动工作空间.ps1'
+```
+
+脚本会启动现有 Docker 服务、等待接口就绪，再打开独立窗口。日志位于 `.tools/desktop-startup.log`；后端未就绪时，窗口显示重新连接提示。
+
+桌面程序位于 `apps/desktop/dist/EnterpriseWorkspace-win32-x64/EnterpriseWorkspace.exe`，需保留整个程序目录。它连接本机 `http://localhost:8080`，仍需要 Docker 后端。关闭窗口不会停止后端服务。
+
+### 浏览器
+
+在项目根目录执行：
+
+```powershell
+docker compose --env-file deploy/.env.r2 -f deploy/docker-compose.yml -f deploy/docker-compose.r2.yml up -d
+```
+
+打开 [工作空间](http://localhost:8080)。此方式适用于已有配置和构建产物的环境；首次拉取项目请先完成下一节。
+
+### 登录
+
+默认管理员用户名为 `admin`，初始化密码见本地 `deploy/.env.r2` 中的 `BOOTSTRAP_PASSWORD`。若初始化前设置了 `BOOTSTRAP_USER`，则使用相应用户名。页面也支持注册账户并创建独立工作空间。
+
+已有数据库中的账户密码不会因编辑初始化环境变量而自动重置。
+
+## 首次构建与部署
+
+### 环境要求
+
+| 工具 | 要求 |
+| --- | --- |
+| Docker Desktop | Linux 容器模式，Compose v2.24.4+（配置使用 `!override`） |
+| PowerShell | 首次构建、环境初始化使用 PowerShell 7.2+；日常桌面启动可用 Windows PowerShell |
+| Java / Maven | JDK 21、Maven 3.6.3+，终端可调用 `mvn` |
+| Node.js / npm | 推荐 Node.js 24 LTS；桌面打包至少需要 Node.js 22.12 |
+| Python | Docker 已包含 Python 3.12 和 CrewAI 0.86.0，启动无需宿主机安装 Python |
+
+首次构建需要下载 Maven/npm 依赖和 Docker 镜像。先启动 Docker Desktop，在 **PowerShell 7** 中切换到项目根目录。
+
+### 1. 准备配置
+
+```powershell
+Set-Location 'F:\project\Tencent-style Muti-agent AI Enterprise Workspace'
+
+# 仅在配置不存在时复制，保留已有 API 配置。
+if (!(Test-Path 'deploy/.env')) {
+    Copy-Item 'deploy/.env.example' 'deploy/.env'
+}
+./deploy/init-r2-env.ps1
+```
+
+编辑 `deploy/.env`，填写 `LLM_BASE_URL`、`LLM_API_KEY` 和 `LLM_MODEL`。Elasticsearch、RabbitMQ 等容器地址可沿用示例。未配置可用模型时，AI 任务会明确失败。
+
+初始化脚本生成 `deploy/.env.r2`，包含数据库、会话、内部服务、MinIO、模型加密和管理员初始化凭据。已有文件会保留。两份环境文件均留在本地，不提交真实密钥。
+
+### 2. 构建前端和 Java 服务
+
+如果 `JAVA_HOME` 已指向 JDK 21：
+
+```powershell
+./deploy/build-r2.ps1 -JdkHome $env:JAVA_HOME
+```
+
+本机已有 JDK 的路径示例：
 
 ```powershell
 ./deploy/build-r2.ps1 -JdkHome 'D:/intellij/IntelliJ IDEA 2025.3.4/jbr'
+```
+
+其他机器请替换为自己的 JDK 21 目录。脚本在当前进程中选择 JDK，结束后恢复环境；Maven/npm 缓存放在项目 `.tools` 下。
+
+**此步骤不可省略：**当前 Dockerfile 会复制 `services/java/*/target` 中的 JAR 和 `apps/workspace/dist`，因此首次部署必须先生成这些产物。
+
+### 3. 构建镜像并启动
+
+```powershell
 docker compose --env-file deploy/.env.r2 -f deploy/docker-compose.yml -f deploy/docker-compose.r2.yml up -d --build
 ```
 
-首次构建会生成独立的 `deploy/.env.r2`，已有 LLM 配置 `deploy/.env` 保留。默认管理员为 `admin`，随机密码见 `.env.r2` 的 `BOOTSTRAP_PASSWORD`；也可在页面注册新的独立空间。不要提交密钥或覆盖现有环境文件。
-
-原有 30 条任务、274 条事件和 1 份报告已迁入 MySQL，原 SQLite 备份保留。完整范围、测试、迁移和回滚说明见 [R2 企业基础验收](docs/R2企业基础验收.md)；后续路线见 [重开发路线](docs/重开发路线.md)。下方 R1 启动与接口说明仅作为历史迁移参考；当前请使用上述两份 Compose 配置。
-
-知识库已修复低相关性强制召回、重复/占位片段和候选误当引用问题，加入 5 份明确标注的模拟业务制度。修复范围、15 个真实检索场景和复验命令见 [知识库检索修复验收](docs/知识库检索修复验收.md)。
-
-## 新开发入口（2026-09-14）
-
-项目正在按《AI Enterprise Workspace 项目描述.md》重建。当前开发基线、14 周路线、模块边界与验收条件见 [重开发路线](docs/重开发路线.md)。下方原型说明保留作迁移参考；新运行时不再使用无密钥的固定模板成功路径，未接入的外部写操作也不能确认成成功。
-
-新前端位于 `apps/workspace`，已实现 React / TypeScript / Vite / Tailwind Workspace；新执行入口为 `app/execution.py`。文本员工使用实际 CrewAI 调用，成果审核后进入报告归档。Java 企业业务层、文件管理、会议联动、数据计算与权限仍按路线开发。
-
-完整 Docker 部署（需能够访问 Docker Hub）：
+首次初始化可能需要数分钟。检查服务状态与接口：
 
 ```powershell
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --build
+docker compose --env-file deploy/.env.r2 -f deploy/docker-compose.yml -f deploy/docker-compose.r2.yml ps
+Invoke-RestMethod 'http://localhost:8080/health'
 ```
 
-新 Workspace：<http://localhost:8080>；运行时 API：<http://localhost:8000>。已有 `.env` 不要用示例覆盖。
+打开 [http://localhost:8080](http://localhost:8080) 登录。首次打包桌面程序见后文。
 
-本地前端联调（后端使用 Docker）：
+## 模型与 API 配置
+
+管理员进入 **系统与开发状态 → 模型与 API**，可修改模型、HTTPS API 地址、密钥、温度及输出上限，并测试连接、保存或恢复部署默认。
+
+- 已确认可调用 `qwen3.7-flash`、`kimi-k3`、`qwen3.8-27b`，实际可用性取决于供应商账户。
+- 空间密钥在 MySQL 中加密保存，页面不回显。空密钥可保留已有配置，更换地址需要重新提供密钥。
+- API 地址受服务端 `MODEL_API_ALLOWED_HOSTS` 白名单限制；需要新增域名时，在 `deploy/.env.r2` 设置白名单并应用新配置。
+- Kimi K3 不传温度参数，界面会禁用温度输入。
+- Embedding 独立使用部署配置，当前为 `qwen3.7-text-embedding-flash`、1024 维；更改维度需重建索引。
+
+修改部署环境文件后，在项目根目录执行以下命令应用新环境变量：
 
 ```powershell
-cd apps/workspace
-npm ci
+docker compose --env-file deploy/.env.r2 -f deploy/docker-compose.yml -f deploy/docker-compose.r2.yml up -d agent-runtime agent-worker workspace-service
+```
+
+保留 `.env.r2` 中的 `WORKSPACE_CONFIG_KEY`，已有空间密钥需要用同一加密主密钥解密。
+
+## 前端开发与代码更新
+
+先启动 Docker 后端，然后从项目根目录运行：
+
+```powershell
+Set-Location apps/workspace
+npm ci --cache ../../.tools/npm-cache
 npm run dev
 ```
 
-开发入口：<http://localhost:5173>，Vite 将 `/v1` 和 `/health` 代理到后端。`npm run build` 执行 TypeScript 与生产构建。
+打开 [http://localhost:5173](http://localhost:5173)。Vite 将 `/auth`、`/v1` 和 `/health` 代理到 `127.0.0.1:8090` 的网关，前端修改可热更新。桌面客户端使用 8080 生产入口，不直接连接 Vite。
 
-后端验证：在 `services/agent-runtime` 执行 `py -3 -m unittest discover -s tests -v`。测试使用项目内独立临时数据库，不覆盖现有数据卷。
-
-新增接口：`GET /v1/messages`、`GET /v1/reports`、`GET /v1/reports/{task_id}`；创建任务可传 `employee_id`。报告只归档新运行时通过审核或人工接受的真实成果，历史模板记录仍可从任务中心查看。
-
-## 历史原型说明
-
-当前仓库包含可运行的第一版。它提供内置 Web 工作台、健康检查、任务提交、持久化任务状态、事件流、Supervisor 计划生成、结构化任务结果 API 和 Elasticsearch 知识库接口。未配置模型密钥时使用 deterministic 模式，便于本地联调；配置 LLM 后进入 CrewAI 适配路径。
-
-当前工作台已增加基础 Workspace 导航、Dashboard 汇总和预置 AI 员工目录。Dashboard 可查看任务总数、执行中任务、待确认任务和知识库文档数；AI 员工目录包含 AI 管家、数据分析师、文档专家、会议秘书、HR 助手、CRM 助手、企业知识专家、产品设计师和 AI 开发工程师。
-
-## 启动
+更新 Docker 中的前端页面，回到项目根目录执行：
 
 ```powershell
-Copy-Item deploy/.env.example deploy/.env
-# 编辑 deploy/.env，填写 LLM_API_KEY 和 LLM_MODEL
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml up --build
+Push-Location apps/workspace
+npm run build
+Pop-Location
+docker compose --env-file deploy/.env.r2 -f deploy/docker-compose.yml -f deploy/docker-compose.r2.yml up -d --no-deps --build workspace
 ```
 
-打开 <http://localhost:8000> 即可使用工作台。
-
-## API 示例
+Java 修改后重新运行 `deploy/build-r2.ps1`，再执行完整的 `up -d --build`。仅修改 Python 运行时代码时：
 
 ```powershell
-Invoke-RestMethod http://localhost:8000/health
-Invoke-RestMethod -Method Post http://localhost:8000/v1/tasks -ContentType 'application/json' -Body '{"prompt":"整理本周项目进展并生成周报","workspace_id":"default"}'
+docker compose --env-file deploy/.env.r2 -f deploy/docker-compose.yml -f deploy/docker-compose.r2.yml up -d --no-deps --build agent-runtime agent-worker
 ```
 
-Workspace 汇总和预置员工接口：
+## 桌面客户端打包（可选）
+
+本机已有客户端可直接使用；新机器需在 Node.js 22.12+ 环境下打包。以下命令从项目根目录执行：
 
 ```powershell
-Invoke-RestMethod 'http://localhost:8000/v1/dashboard?workspace_id=default'
-Invoke-RestMethod http://localhost:8000/v1/employees
+New-Item -ItemType Directory -Force '.tools/electron-cache' | Out-Null
+curl.exe -f -L --retry 1 -o '.tools/electron-cache/electron-v44.3.0-win32-x64.zip' 'https://github.com/electron/electron/releases/download/v44.3.0/electron-v44.3.0-win32-x64.zip'
+
+Push-Location apps/desktop
+npm ci --cache ../../.tools/npm-cache
+npm run package
+Pop-Location
 ```
 
-任务当前使用 SQLite 持久化，数据保存在 Compose 的 `runtime_data` 命名卷中。API 将任务发布到 RabbitMQ，由 `agent-worker` 消费后执行；任务会先进入 `RUNNING`，完成后写入 `SUCCESS` 或 `FAILED`，失败最多自动重试 2 次。可通过 `/v1/tasks/{task_id}/cancel` 取消尚未完成的任务。
+已有完整压缩包时可跳过下载。打包脚本校验官方 SHA-256，缓存、临时文件与产物均放在项目内。重打包前关闭桌面程序，并备份产物目录中的 `profile`，其中保存桌面会话。
 
-完成任务可通过 `GET /v1/tasks/{task_id}/export` 下载 Markdown 结果；工作台中的“导出 Markdown”按钮会调用该接口。
+产物为 `apps/desktop/dist/EnterpriseWorkspace-win32-x64/EnterpriseWorkspace.exe`。之后运行根目录 `启动工作空间.ps1` 即可打开。本机快捷方式已创建，新机器打包不会自动创建快捷方式。当前是未签名的 Windows x64 便携客户端，尚无安装器与自动升级。
 
-## 模型配置
+## 日常管理与排错
 
-部署使用阿里云百炼 OpenAI 兼容接口。当前业务空间已确认可调用 `qwen3.7-flash`、`kimi-k3`、`qwen3.8-27b`，默认配置为 `qwen3.7-flash`；向量模型为 `qwen3.7-text-embedding-flash`，维度 1024。真实密钥只放在本地 `deploy/.env`，不要提交到 Git 或写入镜像。
-
-```dotenv
-LLM_BASE_URL=https://ws-fhr1u2m9mysymhf3.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-LLM_MODEL=qwen3.7-flash
-EMBEDDING_MODEL=qwen3.7-text-embedding-flash
-EMBEDDING_DIM=1024
-```
-
-## 知识库接口
+以下命令均从项目根目录执行：
 
 ```powershell
-Invoke-RestMethod -Method Post http://localhost:8000/v1/knowledge/documents -ContentType 'application/json' -Body '{"workspace_id":"default","document_id":"doc-1","title":"报销制度","content":"差旅报销需在30天内提交。"}'
-Invoke-RestMethod 'http://localhost:8000/v1/knowledge/search?workspace_id=default&q=报销'
+# 查看服务状态。
+docker compose --env-file deploy/.env.r2 -f deploy/docker-compose.yml -f deploy/docker-compose.r2.yml ps
+
+# 查看近期业务日志；Ctrl+C 退出日志跟踪。
+docker compose --env-file deploy/.env.r2 -f deploy/docker-compose.yml -f deploy/docker-compose.r2.yml logs --tail=100 -f workspace-service agent-runtime agent-worker
+
+# 停止服务，保留容器和数据。
+docker compose --env-file deploy/.env.r2 -f deploy/docker-compose.yml -f deploy/docker-compose.r2.yml stop
 ```
 
-涉及发送、删除或 CRM 写入的任务会进入 `PENDING_CONFIRMATION`；确认接口：
+再次执行快速启动命令即可恢复。数据库、原文件和检索索引保存在 Docker 命名卷；需要保留数据时不要使用 `down -v`。Docker 实际存储位置由 Docker Desktop 设置决定。
+
+| 现象 | 处理方式 |
+| --- | --- |
+| 无法连接 Docker 引擎 | 打开 Docker Desktop，确认 `docker info` 正常，并使用 Linux 容器模式 |
+| Compose 无法识别 `!override` | 更新 Compose 至 v2.24.4+ |
+| 构建提示找不到 JAR 或 `dist` | 先运行 `deploy/build-r2.ps1`，检查构建是否成功 |
+| 初始化提示 `ToHexString` 不存在 | 用 PowerShell 7.2+ 运行初始化和构建脚本 |
+| 桌面提示服务未启动 | 查看 Docker 状态和 `.tools/desktop-startup.log`，服务就绪后点击重新连接 |
+| 8080 暂时返回 502 | Java 或网关可能仍在启动；检查 `ps` 和服务日志 |
+| 端口被占用 | 停止占用端口的其他服务；桌面固定使用 8080，Vite 代理固定使用 8090 |
+| 页面修改未在桌面生效 | 构建前端、更新 workspace 容器，再关闭并重新打开桌面窗口 |
+| 任务停在规划或执行节点 | 点击节点查看耗时与事件，检查模型连接及 Worker 日志；可取消任务 |
+| 任务待人工处理 | 检查审核意见和成果，再决定接受或取消；审核超时不会自动归档 |
+| 文档处理失败 | 点击文档查看错误并重试；单文件限 5 MB，扫描 PDF 需要尚未接入的 OCR |
+
+## 服务入口
+
+| 服务 | 本机地址 | 用途 |
+| --- | --- | --- |
+| Workspace | [localhost:8080](http://localhost:8080) | 页面和桌面客户端入口 |
+| Vite | [localhost:5173](http://localhost:5173) | 手动启动的前端开发服务器 |
+| Gateway | `127.0.0.1:8090` | Java 网关，Vite 代理目标 |
+| Workspace Service | `127.0.0.1:8081` | Java 业务服务 |
+| Agent Runtime | `127.0.0.1:8000` | Python 内部执行、知识与文档服务，需内部认证 |
+| Elasticsearch | `127.0.0.1:9200` | 知识索引与向量检索 |
+| MySQL / Redis | `127.0.0.1:3307` / `127.0.0.1:6380` | 业务数据与会话 |
+| RabbitMQ 控制台 | [localhost:15672](http://localhost:15672) | 消息队列管理 |
+| MinIO 控制台 | [localhost:9001](http://localhost:9001) | 原文件管理，凭据见 `.env.r2` 的 MinIO 配置 |
+
+当前 Compose 用于本机开发。业务请求通过登录会话确定工作空间，8000 端口不是用户工作台入口。
+
+## 已实现功能与技术栈
+
+- React / TypeScript / Vite 工作空间、玻璃质感界面与 Electron 桌面入口。
+- Java 21 / Spring Boot 3.5.16 / Spring Cloud 2025.0.3，登录、空间隔离、ADMIN/MEMBER/VIEWER、成员管理及审计。
+- Python 3.12 / CrewAI 0.86.0，Supervisor 规划、依赖执行、最多两个并行 Worker、汇总、审核修订和人工确认。
+- 动态流程图：中文节点名称、依赖连线、实时状态、输入输出、异常、耗时、缩放展开与重试轮次回看。
+- MySQL 业务持久化、Redis 会话、RabbitMQ 事务 Outbox、执行租约与恢复。
+- MinIO 文档原件、六种格式文本解析、版本预览/下载、失败重试、归档恢复；Elasticsearch 检索与来源追溯。
+- 空间模型/API 配置、密钥加密、真实成果归档与 Markdown 导出。
+
+模型审核仍可能漏检字数或内容问题；历史任务缺失的流程事件会标注未记录。流程图用于观察执行，不支持拖拽修改计划或重放单节点。
+
+## 验证与开发资料
+
+前端验证，从项目根目录执行：
 
 ```powershell
-Invoke-RestMethod -Method Post http://localhost:8000/v1/tasks/{task_id}/confirm
+Push-Location apps/workspace
+npm run test:workflow
+npm run build
+Pop-Location
 ```
 
-## 验证
+后端验证使用已启动的容器：
 
 ```powershell
-Invoke-RestMethod http://localhost:8000/health
-docker compose -f deploy/docker-compose.yml ps
+docker compose --env-file deploy/.env.r2 -f deploy/docker-compose.yml -f deploy/docker-compose.r2.yml cp services/agent-runtime/tests/. agent-runtime:/app/tests
+docker compose --env-file deploy/.env.r2 -f deploy/docker-compose.yml -f deploy/docker-compose.r2.yml exec -T agent-runtime python -m unittest discover -s tests -v
 ```
+
+Java 测试包含在 `build-r2.ps1` 的 Maven 构建中。最近流程阶段验证为前端 10 项、Python 31 项通过；详细场景和限制见以下文档。
+
+- [重开发路线与阶段验收](docs/重开发路线.md)
+- [R2 企业基础：认证、迁移与故障恢复](docs/R2企业基础验收.md)
+- [R3 文档、模型与桌面验收](docs/R3文档与模型验收.md)
+- [动态协作流程图验收](docs/动态协作流程图验收.md)
+- [知识库检索修复验收](docs/知识库检索修复验收.md)
+
+旧 SQLite 原型与迁移备份仅供历史对照。当前启动统一使用 `.env.r2` 和两份 Compose 配置。

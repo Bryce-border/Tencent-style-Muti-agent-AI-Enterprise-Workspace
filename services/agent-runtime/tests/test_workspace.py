@@ -57,7 +57,27 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("product_designer 的真实测试输出", calls[1][1])
         self.assertIn("补充假设", calls[3][1])
         self.assertEqual(events.count("review.feedback"), 1)
+        self.assertEqual(events.count("review.started"), 2)
+        self.assertLess(events.index("revision.started"), events.index("revision.completed"))
+        self.assertLess(events.index("revision.completed"), len(events) - 1)
         self.assertEqual(result.data["review"]["decision"], "PASS")
+
+    async def test_revision_failure_reports_stage_without_false_completion(self):
+        calls = iter(["原稿", Review(decision="REVISE", feedback="补充来源"), ValueError("invalid response")])
+        records = []
+        def worker(*args):
+            value = next(calls)
+            if isinstance(value, Exception):
+                raise value
+            return value
+        task = Task(workspace_id="tenant-a", prompt="仅根据所给事实生成摘要", employee_id="document_expert")
+        with patch.object(self.engine, "_call", side_effect=worker):
+            result = await self.engine.execute(task, lambda name, payload: records.append((name, payload)))
+        self.assertEqual(result.status, "PENDING_CONFIRMATION")
+        self.assertEqual(result.data["output"], "原稿")
+        self.assertNotIn("revision.completed", [name for name, _ in records])
+        self.assertEqual(records[-1][1]["stage"], "revision")
+        self.assertEqual(records[-1][1]["reason"], "ValueError")
 
     async def test_cancellation_stops_new_workers(self):
         with self.assertRaises(asyncio.CancelledError):

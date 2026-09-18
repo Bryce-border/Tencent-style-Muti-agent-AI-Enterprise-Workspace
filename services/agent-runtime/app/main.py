@@ -39,6 +39,16 @@ app = FastAPI(title="AI Enterprise Workspace Agent Runtime", version="0.1.0", li
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins.split(","), allow_methods=["*"], allow_headers=["*"])
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
+@app.post("/v1/output-preview")
+async def output_preview(payload: dict, request: Request):
+    if not settings.workspace_internal_token or not hmac.compare_digest(request.headers.get("X-Internal-Token", ""), settings.workspace_internal_token):
+        raise HTTPException(status_code=403, detail="service authentication required")
+    from .output_preview import generate_preview
+    try:
+        return await generate_preview(settings, payload)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="方案生成未完成，请检查模型连接后重试；尚未开始执行任务。") from exc
+
 
 @app.middleware("http")
 async def internal_boundary(request: Request, call_next):
@@ -46,7 +56,7 @@ async def internal_boundary(request: Request, call_next):
         token = request.headers.get("X-Internal-Token", "")
         if not hmac.compare_digest(token, settings.workspace_internal_token):
             return JSONResponse({"detail": "service authentication required"}, status_code=401)
-        if request.url.path not in ("/v1/employees", "/v1/dashboard", "/v1/knowledge/search", "/v1/knowledge/documents", "/v1/model-defaults", "/v1/files/store", "/v1/files/index", "/v1/files/download", "/v1/files/exclude"):
+        if request.url.path not in ("/v1/output-preview", "/v1/employees", "/v1/dashboard", "/v1/knowledge/search", "/v1/knowledge/documents", "/v1/model-defaults", "/v1/files/store", "/v1/files/index", "/v1/files/download", "/v1/files/exclude"):
             return JSONResponse({"detail": "business API moved to workspace-service"}, status_code=410)
     return await call_next(request)
 
@@ -207,7 +217,10 @@ async def run_task(task_id: str) -> None:
                     current = store.get(task_id)
                     return current is not None and current.status == "CANCELLED"
 
-                result = await asyncio.wait_for(execution_runtime.execute(task, on_event, is_cancelled), timeout=settings.max_task_seconds)
+                context = await asyncio.to_thread(store.context, task_id) if isinstance(store, RemoteTaskStore) else {}
+                document_mode = (context.get("output_spec") or {}).get("generation_mode") == "chapters"
+                execution_seconds = settings.max_document_seconds if document_mode else settings.max_task_seconds
+                result = await asyncio.wait_for(execution_runtime.execute(task, on_event, is_cancelled, context=context), timeout=execution_seconds)
             except asyncio.CancelledError:
                 if lease_lost.is_set():
                     return
@@ -216,9 +229,9 @@ async def run_task(task_id: str) -> None:
                     return
                 raise
             except asyncio.TimeoutError:
-                result = task.result or TaskResult(task_id=task.task_id, agent="runtime", status="FAILED", error=f"task timeout after {settings.max_task_seconds}s")
+                result = task.result or TaskResult(task_id=task.task_id, agent="runtime", status="FAILED", error="执行超时，请检查模型连接或缩小任务范围。")
             except Exception as exc:  # defensive boundary for background tasks
-                result = TaskResult(task_id=task.task_id, agent="runtime", status="FAILED", error=f"AI 执行失败（{type(exc).__name__}），请检查模型服务配置后重试。")
+                result = task.result or TaskResult(task_id=task.task_id, agent="runtime", status="FAILED", error=f"AI 执行失败（{type(exc).__name__}），请检查模型服务配置后重试。")
             if result.status != "FAILED" or attempt >= settings.max_task_retries:
                 break
             store.add_event(task.task_id, "task.retry.scheduled", {"attempt": attempt + 1, "next_attempt": attempt + 2, "error": result.error})

@@ -100,3 +100,6 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(input_only("仅根据以下事实写周报：完成工作台"))
         self.assertTrue(input_only("不要检索知识库，整理会议记录"))
         self.assertFalse(input_only("仅根据公司报销制度回答出差住宿标准"))
+        self.assertTrue(input_only("仅使用本次资料：星舟项目仅有两种角色"))
+        self.assertTrue(input_only("只基于当前输入整理方案"))
+        self.assertFalse(input_only("仅根据当前公司报销制度回答住宿标准"))

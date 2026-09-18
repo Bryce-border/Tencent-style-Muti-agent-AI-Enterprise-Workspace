@@ -1,19 +1,18 @@
+import { WorkspaceShell } from "./features/assistant/WorkspaceShell";
+import { MemoryPage } from "./features/assistant/MemoryPage";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
   Link,
   NavLink,
   Route,
   Routes,
-  useNavigate,
   useParams,
-  useSearchParams,
 } from "react-router-dom";
 import {
   Activity,
   ArrowDownToLine,
   ArrowLeft,
   ArrowRight,
-  ArrowUp,
   Bot,
   BriefcaseBusiness,
   CalendarDays,
@@ -43,6 +42,7 @@ import { api, useResource } from "./api";
 import { useSession, SessionControls } from "./auth";
 import { Members } from "./members";
 import { ModelSettings } from "./model-settings";
+import { AssistantWorkbench } from "./features/assistant/ConversationPage";
 import { Documents } from "./documents";
 import { Workflow } from "./workflow";
 import { eventNames } from "./workflow-model";
@@ -162,142 +162,29 @@ function Reload({ onClick }: { onClick: () => void }) {
 }
 
 export function App() {
-  const session = useSession();
-  const [menu, setMenu] = useState(false);
-  const health = useResource<{ status: string }>("/health", 30000);
-  return (
-    <div className="shell">
-      <aside className={`sidebar ${menu ? "is-open" : ""}`}>
-        <Link className="brand" to="/" onClick={() => setMenu(false)}>
-          <img src="/application-icon.png" alt="" />
-          <span>
-            Enterprise<span className="brand-sub">AI WORKSPACE</span>
-          </span>
-        </Link>
-        <div className="workspace-label">
-          <BriefcaseBusiness size={16} />
-          <span>
-            {
-              session.workspaces.find(
-                (space) => space.id === session.workspace_id,
-              )?.name
-            }
-          </span>
-          <span className="small-badge">本地</span>
-        </div>
-        <Button asChild className="new-work">
-          <Link to="/assistant" onClick={() => setMenu(false)}>
-            <Plus size={16} />
-            新建工作
-          </Link>
-        </Button>
-        <p className="nav-caption">WORKSPACE</p>
-        <nav aria-label="主导航">
-          {navigation.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              end={item.path === "/"}
-              onClick={() => setMenu(false)}
-              className={({ isActive }) =>
-                `nav-link ${isActive ? "selected" : ""}`
-              }
-            >
-              <item.icon size={17} />
-              <span>{item.name}</span>
-            </NavLink>
-          ))}
-        </nav>
-        <div className="sidebar-foot">
-          <NavLink
-            to="/admin"
-            className="nav-link"
-            onClick={() => setMenu(false)}
-          >
-            <Settings2 size={17} />
-            系统与开发状态
-          </NavLink>
-          <SessionControls />
-        </div>
-      </aside>
-      {menu && (
-        <button
-          className="menu-backdrop"
-          aria-label="关闭导航"
-          onClick={() => setMenu(false)}
-        />
-      )}
-      <div className="main-shell">
-        <header className="topbar">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="mobile-menu"
-            aria-label={menu ? "关闭导航" : "打开导航"}
-            onClick={() => setMenu(!menu)}
-          >
-            {menu ? <X size={18} /> : <Menu size={18} />}
-          </Button>
-          <span className="breadcrumb">
-            Workspace <ChevronRight size={13} />{" "}
-            {
-              session.workspaces.find(
-                (space) => space.id === session.workspace_id,
-              )?.name
-            }
-          </span>
-          <div className="topbar-right">
-            <span className={`connection ${health.error ? "offline" : ""}`}>
-              <i />
-              {health.loading
-                ? "连接中"
-                : health.error
-                  ? "服务不可用"
-                  : "服务已连接"}
-            </span>
-            <Link to="/assistant" className="topbar-command" title="新建工作">
-              <Plus size={17} />
-            </Link>
-          </div>
-        </header>
-        <main className="page">
-          <Routes>
-            <Route path="/" element={<Overview />} />
-            <Route path="/assistant" element={<Assistant />} />
-            <Route path="/employees" element={<Employees />} />
-            <Route path="/tasks" element={<Tasks />} />
-            <Route path="/tasks/:taskId" element={<TaskDetail />} />
-            <Route path="/messages" element={<Messages />} />
-            <Route path="/knowledge" element={<Knowledge />} />
-            <Route path="/documents" element={<Documents />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/reports/:taskId" element={<ReportDetail />} />
-            <Route path="/admin" element={<Admin />} />
-            <Route
-              path="*"
-              element={
-                <>
-                  <PageHeading title="页面不存在" />
-                  <Button asChild>
-                    <Link to="/">返回总览</Link>
-                  </Button>
-                </>
-              }
-            />
-          </Routes>
-        </main>
-        <footer className="statusbar">
-          <span>
-            <ShieldCheck size={12} />
-            本地开发环境
-          </span>
-          <span>Enterprise Workspace · 0.4</span>
-        </footer>
-      </div>
-    </div>
-  );
+  return <WorkspaceShell><Routes>
+    <Route path="/" element={<AssistantWorkbench />} />
+    <Route path="/assistant" element={<AssistantWorkbench />} />
+    <Route path="/knowledge" element={<KnowledgeHome />} />
+    <Route path="/memory" element={<MemoryPage />} />
+    <Route path="/settings" element={<SettingsHome />} />
+    <Route path="/documents" element={<div className="gui-page"><Documents /></div>} />
+    <Route path="/tasks/:taskId" element={<div className="gui-page"><TaskDetail /></div>} />
+    <Route path="/reports/:taskId" element={<div className="gui-page"><ReportDetail /></div>} />
+    <Route path="/tasks" element={<div className="gui-page"><Tasks /></div>} />
+    <Route path="/reports" element={<div className="gui-page"><Reports /></div>} />
+    <Route path="/admin" element={<SettingsHome />} />
+    <Route path="*" element={<AssistantWorkbench />} />
+  </Routes></WorkspaceShell>;
 }
-
+function KnowledgeHome() {
+  const [tab,setTab]=useState("files");
+  return <div className="gui-page"><div className="gui-page-title"><span className="gui-eyebrow">WORKSPACE KNOWLEDGE</span><h1>知识库</h1><p>让每一次回答，都有据可循。</p></div><div className="gui-tabs"><button className={tab==="files"?"active":""} onClick={()=>setTab("files")}>知识文件</button><button className={tab==="search"?"active":""} onClick={()=>setTab("search")}>检索与引用</button></div>{tab==="files"?<Documents/>:<Knowledge/>}</div>;
+}
+function SettingsHome() {
+  const [tab,setTab]=useState("model");
+  return <div className="gui-page"><div className="gui-page-title"><span className="gui-eyebrow">PREFERENCES</span><h1>设置</h1><p>管理工作空间、模型连接与成员权限。</p></div><div className="gui-tabs"><button className={tab==="model"?"active":""} onClick={()=>setTab("model")}>模型与 API</button><button className={tab==="workspace"?"active":""} onClick={()=>setTab("workspace")}>工作空间</button><button className={tab==="output"?"active":""} onClick={()=>setTab("output")}>输出偏好</button></div>{tab==="model"?<ModelSettings/>:tab==="workspace"?<><SessionControls/><Members/></>:<div className="gui-info-card"><h2>以你的习惯开展工作</h2><p>在记忆中保存语言、格式、篇幅和写作要求。每次工作仍会先展示预计输出，待你确认后执行。</p><Button asChild><Link to="/memory">管理输出偏好</Link></Button><p className="gui-muted">基于偏好匹配的自动批准尚未启用。</p></div>}</div>;
+}
 function Overview() {
   const stats = useResource<Dashboard>("/v1/dashboard", 15000);
   const tasks = useResource<Task[]>("/v1/tasks?limit=5", 5000);
@@ -434,151 +321,6 @@ function Overview() {
         <Link to="/employees">
           查看员工 <ArrowRight size={14} />
         </Link>
-      </div>
-    </>
-  );
-}
-
-function Assistant() {
-  const session = useSession();
-  const employees = useResource<Employee[]>("/v1/employees");
-  const [params] = useSearchParams();
-  const navigate = useNavigate();
-  const [employee, setEmployee] = useState(
-    params.get("employee") || "ai_assistant",
-  );
-  const [prompt, setPrompt] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const active = employees.data?.find((item) => item.employee_id === employee);
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (busy || session.role === "VIEWER") return;
-    setError("");
-    setBusy(true);
-    try {
-      const task = await api<Task>("/v1/tasks", {
-        method: "POST",
-        headers: { "Idempotency-Key": crypto.randomUUID() },
-        body: JSON.stringify({
-          prompt: prompt.trim(),
-          employee_id: employee,
-        }),
-      });
-      navigate(`/tasks/${task.task_id}`);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <>
-      <PageHeading title="AI Assistant" subtitle="新建工作" />
-      <div className="assistant-layout">
-        <div className="assistant-primary">
-          <div className="assistant-identity">
-            <img src="/application-icon.png" alt="" />
-            <div>
-              <h2>{active?.name || "AI 管家"}</h2>
-              <p>{active?.title || "企业工作助手"}</p>
-            </div>
-          </div>
-          {employees.error && (
-            <Failure message={employees.error} retry={employees.reload} />
-          )}
-          <form className="work-form" onSubmit={submit}>
-            <label htmlFor="employee">负责员工</label>
-            <select
-              id="employee"
-              value={employee}
-              onChange={(event) => setEmployee(event.target.value)}
-              disabled={busy || employees.loading}
-            >
-              {(employees.data || []).map((item) => (
-                <option value={item.employee_id} key={item.employee_id}>
-                  {item.name}
-                  {item.status === "unconfigured" ? "（模型未配置）" : ""}
-                </option>
-              ))}
-            </select>
-            <label htmlFor="goal">工作目标与资料</label>
-            <textarea
-              id="goal"
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              required
-              minLength={3}
-              maxLength={4000}
-              rows={9}
-              placeholder="例如：设计一个企业知识库产品，输出 MVP 需求和开发计划。"
-            />
-            <div className="composer-footer">
-              <span>{prompt.length} / 4000</span>
-              <Button
-                type="submit"
-                disabled={
-                  busy ||
-                  session.role === "VIEWER" ||
-                  prompt.trim().length < 3 ||
-                  active?.status !== "available"
-                }
-              >
-                {busy ? (
-                  <LoaderCircle size={16} className="spin" />
-                ) : (
-                  <ArrowUp size={16} />
-                )}
-                提交工作
-              </Button>
-            </div>
-          </form>
-          {error && <Failure message={error} />}
-        </div>
-        <aside className="assistant-side">
-          <h2>常用工作</h2>
-          {[
-            {
-              name: "产品与技术方案",
-              employee: "ai_assistant",
-              text: "设计一个企业 AI 知识库产品，面向 50 人团队，输出 MVP 需求、技术方案和分阶段开发计划。",
-            },
-            {
-              name: "项目周报",
-              employee: "document_expert",
-              text: "根据以下进展整理项目周报，区分本周完成、风险与下周计划。进展：",
-            },
-            {
-              name: "制度查询",
-              employee: "knowledge_expert",
-              text: "查询企业知识库中的报销制度，列出申请步骤与来源。",
-            },
-            {
-              name: "会议纪要",
-              employee: "meeting_secretary",
-              text: "根据以下会议记录整理决策和行动项，负责人及日期缺失时标记待确认。会议记录：",
-            },
-          ].map((item) => (
-            <button
-              className="scenario"
-              key={item.name}
-              onClick={() => {
-                setEmployee(item.employee);
-                setPrompt(item.text);
-              }}
-            >
-              <FileText size={17} />
-              <span>{item.name}</span>
-              <ArrowRight size={15} />
-            </button>
-          ))}
-          <div className="employee-note">
-            <span className="small-badge">当前工作范围</span>
-            <p>
-              文本资料与企业知识。附件、会议同步、数据文件计算及外部发送尚未接入。
-            </p>
-          </div>
-        </aside>
       </div>
     </>
   );

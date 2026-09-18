@@ -13,7 +13,7 @@ const internal = url => { try { return new URL(url).origin === origin; } catch {
 function createWindow() {
   window = new BrowserWindow({ width: 1380, height: 920, minWidth: 700, minHeight: 560,
     title: 'Enterprise Workspace', icon: path.join(__dirname, 'application.ico'),
-    titleBarStyle: 'hidden', titleBarOverlay: { color:'#f1f6f600', symbolColor:'#385a59', height:38 },
+    titleBarStyle: 'hidden', titleBarOverlay: { color:'#f5f8ff', symbolColor:'#38577f', height:38 },
     backgroundColor:'#f5f7fa', show:false,
     webPreferences: { nodeIntegration:false, contextIsolation:true, sandbox:true, webSecurity:true }
   });
@@ -25,7 +25,7 @@ function createWindow() {
   window.webContents.on('will-redirect', (event, url) => { if (!internal(url)) event.preventDefault(); });
   window.webContents.on('page-title-updated', event => { event.preventDefault(); window.setTitle('Enterprise Workspace'); });
   window.webContents.on('did-finish-load', () => {
-    if (internal(window.webContents.getURL())) window.webContents.insertCSS(`body{padding-top:38px} .sidebar{top:38px} body::after{content:'Enterprise Workspace';position:fixed;inset:0 0 auto 0;height:38px;padding:10px 16px;font:12px 'Segoe UI';color:#466563;background:rgba(244,249,249,.9);z-index:1000;-webkit-app-region:drag;box-sizing:border-box}`);
+    if (internal(window.webContents.getURL())) window.webContents.insertCSS(`body{padding-top:38px;overflow:hidden}body .gui-shell{height:calc(100dvh - 38px)}body .gui-task-panel{max-height:calc(100dvh - 38px)}@media(max-width:980px){body .gui-task-panel{top:44px}}body::after{content:'Enterprise Workspace';position:fixed;inset:0 0 auto 0;height:38px;padding:10px 16px;font:12px 'Segoe UI';color:#38577f;background:#f5f8ff;z-index:1000;-webkit-app-region:drag;box-sizing:border-box}`);
     window.show();
   });
   window.webContents.session.on('will-download', (_event, item) => {

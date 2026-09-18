@@ -1,0 +1,10 @@
+ALTER TABLE conversations ADD COLUMN archived BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE conversations ADD COLUMN updated_at VARCHAR(40) NULL;
+ALTER TABLE conversations ADD COLUMN output_draft LONGTEXT NULL;
+ALTER TABLE conversations ADD COLUMN draft_revision INT NOT NULL DEFAULT 0;
+ALTER TABLE conversations ADD COLUMN approved_task_id VARCHAR(64) NULL;
+UPDATE conversations SET updated_at=created_at;
+ALTER TABLE conversation_turns ADD COLUMN output_spec LONGTEXT NULL;
+ALTER TABLE agent_memories ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE agent_memories ADD COLUMN updated_at VARCHAR(40) NULL;
+UPDATE agent_memories SET updated_at=created_at;

@@ -37,6 +37,10 @@ public class TaskRepository {
 
     @Transactional
     public ObjectNode create(String space,String prompt,String employee,String requestKey) {
+        return create(space,prompt,employee,requestKey,null);
+    }
+    @Transactional
+    public ObjectNode create(String space,String prompt,String employee,String requestKey,String owner) {
         // Workspace lock also serializes duplicate idempotency keys across service instances.
         db.queryForObject("SELECT id FROM workspaces WHERE id=? FOR UPDATE",String.class,space);
         if (requestKey!=null) {
@@ -44,7 +48,8 @@ public class TaskRepository {
             List<String> existing=db.queryForList("SELECT snapshot FROM tasks WHERE workspace_id=? AND request_key=?",String.class,space,requestKey);
             if (!existing.isEmpty()) {
                 var task=parse(existing.getFirst());
-                if (!task.path("prompt").asText().equals(prompt) || !task.path("employee_id").asText().equals(employee))
+                String existingOwner=db.queryForObject("SELECT owner_user_id FROM tasks WHERE task_id=?",String.class,task.path("task_id").asText());
+                if (!java.util.Objects.equals(owner,existingOwner) || !task.path("prompt").asText().equals(prompt) || !task.path("employee_id").asText().equals(employee))
                     throw new ResponseStatusException(CONFLICT,"幂等键已用于不同请求");
                 return task;
             }
@@ -53,10 +58,23 @@ public class TaskRepository {
         task.put("task_id",id).put("workspace_id",space).put("prompt",prompt).put("employee_id",employee).put("status","PENDING")
             .put("created_at",Instant.now().toString()).put("updated_at",Instant.now().toString());
         task.putArray("plan"); task.putNull("result");
-        db.update("INSERT INTO tasks(task_id,workspace_id,status,snapshot,updated_ms,request_key) VALUES (?,?,?,?,?,?)",id,space,"PENDING",task.toString(),System.currentTimeMillis(),requestKey);
+        db.update("INSERT INTO tasks(task_id,workspace_id,status,snapshot,updated_ms,request_key,owner_user_id) VALUES (?,?,?,?,?,?,?)",id,space,"PENDING",task.toString(),System.currentTimeMillis(),requestKey,owner);
         db.update("INSERT INTO task_outbox(task_id) VALUES (?)",id);
         event(id,"task.created",task);
         return task;
+    }
+
+    public ObjectNode visible(String id,IdentityService.Identity actor) {
+        var task=owned(id,actor.workspaceId());
+        String owner=db.queryForObject("SELECT owner_user_id FROM tasks WHERE task_id=?",String.class,id);
+        if(owner!=null && !owner.equals(actor.userId())) throw new ResponseStatusException(NOT_FOUND,"任务不存在");
+        return task;
+    }
+    public boolean visibleId(String id,IdentityService.Identity actor) {
+        return db.queryForObject("SELECT COUNT(*) FROM tasks WHERE task_id=? AND workspace_id=? AND (owner_user_id IS NULL OR owner_user_id=?)",Integer.class,id,actor.workspaceId(),actor.userId())>0;
+    }
+    public List<ObjectNode> visibleList(IdentityService.Identity actor,int limit) {
+        return db.query("SELECT snapshot FROM tasks WHERE workspace_id=? AND (owner_user_id IS NULL OR owner_user_id=?) ORDER BY updated_ms DESC LIMIT ?",(rs,i)->parse(rs.getString(1)),actor.workspaceId(),actor.userId(),Math.clamp(limit,1,100));
     }
 
     private Map<String,Object> lock(String id) {
@@ -118,6 +136,29 @@ public class TaskRepository {
     }
 
     @Transactional
+    public ObjectNode retryDocument(String id,String space) {
+        var links=db.queryForList("SELECT conversation_id,output_spec FROM conversation_turns WHERE task_id=?",id);
+        if(links.isEmpty()) throw new ResponseStatusException(CONFLICT,"此任务不支持章节续作");
+        var link=links.getFirst();
+        var c=db.queryForMap("SELECT * FROM conversations WHERE id=? FOR UPDATE",link.get("conversation_id"));
+        if(!space.equals(c.get("workspace_id")) || Boolean.TRUE.equals(c.get("archived")) || !id.equals(c.get("approved_task_id")))
+            throw new ResponseStatusException(CONFLICT,"请在原会话当前批准任务中重试，已归档或已有新方案的任务不可重试");
+        var spec=link.get("output_spec");
+        if(db.queryForObject("SELECT COUNT(*) FROM conversation_turns c JOIN tasks t ON t.task_id=c.task_id WHERE c.conversation_id=? AND c.task_id<>? AND t.status IN ('PENDING','RUNNING','PENDING_CONFIRMATION')",Integer.class,link.get("conversation_id"),id)>0)
+            throw new ResponseStatusException(CONFLICT,"会话内已有其他任务正在执行");
+        if(spec==null || !parse((String)spec).path("generation_mode").asText().equals("chapters"))
+            throw new ResponseStatusException(CONFLICT,"仅分章文档支持章节续作");
+        var row=lock(id); var task=parse((String)row.get("snapshot"));
+        if(List.of("RUNNING","PENDING").contains(task.path("status").asText())) return task;
+        if(!task.path("status").asText().equals("FAILED")) throw new ResponseStatusException(CONFLICT,"只有失败任务可以重试");
+        task.put("status","PENDING");persist(task);
+        db.update("UPDATE tasks SET lease_token=NULL,lease_until=0,attempts=0 WHERE task_id=?",id);
+        db.update("UPDATE task_outbox SET published_ms=0 WHERE task_id=?",id);
+        event(id,"task.retry.requested",json.createObjectNode().put("reason","user_resume_document"));
+        return task;
+    }
+
+    @Transactional
     public ObjectNode action(String id,String space,String action) {
         var row=lock(id); var task=parse((String)row.get("snapshot"));
         if (!space.equals(task.path("workspace_id").asText())) throw new ResponseStatusException(NOT_FOUND,"任务不存在");
@@ -145,6 +186,12 @@ public class TaskRepository {
     }
     public List<Map<String,Object>> messages(String space) {
         return db.query("SELECT e.*,t.snapshot FROM task_events e JOIN tasks t ON t.task_id=e.task_id WHERE t.workspace_id=? ORDER BY e.id DESC LIMIT 100",(rs,i)->Map.of("id",rs.getLong("id"),"task_id",rs.getString("task_id"),"type",rs.getString("event_type"),"payload",parse(rs.getString("payload")),"prompt",parse(rs.getString("snapshot")).path("prompt").asText(),"created_at",rs.getString("created_at")),space);
+    }
+    public List<Map<String,Object>> messages(IdentityService.Identity actor) {
+        return db.query("SELECT e.*,t.snapshot FROM task_events e JOIN tasks t ON t.task_id=e.task_id WHERE t.workspace_id=? AND (t.owner_user_id IS NULL OR t.owner_user_id=?) ORDER BY e.id DESC LIMIT 100",(rs,i)->Map.of("id",rs.getLong("id"),"task_id",rs.getString("task_id"),"type",rs.getString("event_type"),"payload",parse(rs.getString("payload")),"prompt",parse(rs.getString("snapshot")).path("prompt").asText(),"created_at",rs.getString("created_at")),actor.workspaceId(),actor.userId());
+    }
+    public List<Map<String,Object>> reports(IdentityService.Identity actor) {
+        return db.queryForList("SELECT r.task_id,r.title,r.created_at FROM reports r JOIN tasks t ON t.task_id=r.task_id WHERE r.workspace_id=? AND (t.owner_user_id IS NULL OR t.owner_user_id=?) ORDER BY r.created_at DESC LIMIT 100",actor.workspaceId(),actor.userId());
     }
     public List<Map<String,Object>> reports(String space) {
         return db.queryForList("SELECT task_id,title,created_at FROM reports WHERE workspace_id=? ORDER BY created_at DESC LIMIT 100",space);

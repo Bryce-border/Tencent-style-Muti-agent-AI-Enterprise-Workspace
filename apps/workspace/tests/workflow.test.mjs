@@ -10,6 +10,42 @@ const step = (node_id, depends_on = []) => ({ node_id, depends_on, employee_id: 
 const task = (overrides = {}) => ({ task_id: 'test', status: 'RUNNING', prompt: '业务目标', plan: [], result: null, employee_id: 'ai_assistant', ...overrides });
 const get = (graph, id) => graph.nodes.find(n => n.id === id);
 
+test('chapter reuse is explicit in the current attempt and includes call details', () => {
+  const plan = [step('chapter-1')];
+  const graph = buildWorkflow(task(), [event('task.attempt.started'), event('plan.created', { plan, source: 'approved_outline' }), event('agent.node.completed', { node_id: 'chapter-1', output: '已保存正文', reused: true })]);
+  assert.equal(get(graph, 'worker:chapter-1').status, 'done');
+  assert.match(get(graph, 'worker:chapter-1').note, /复用/);
+  assert.equal(get(graph, 'worker:chapter-1').output, '已保存正文');
+});
+
+test('targeted chapter revision and assembly have inspectable independent nodes', () => {
+  const graph = buildWorkflow(task(), [event('review.feedback', { feedback: '补充架构' }), event('revision.started'),
+    event('document.chapter.revision.started', { chapter_id: 'chapter-2', title: '架构', feedback: '补充权限' }),
+    event('document.call.completed', { node_id: 'chapter-2-revision', status: 'SUCCESS', elapsed_ms: 100 }),
+    event('document.chapter.revision.completed', { chapter_id: 'chapter-2', output: '修订正文' }), event('revision.completed'),
+    event('review.started', { round: 2 }), event('review.completed', { round: 2, decision: 'PASS' }), event('document.assembled', { chapters: 2 })]);
+  assert.equal(get(graph, 'revision:chapter-2').output, '修订正文');
+  assert.equal(get(graph, 'revision:chapter-2').events.length, 3);
+  assert.deepEqual(get(graph, 'sys:recheck').depends, ['revision:chapter-2']);
+  assert.equal(get(graph, 'sys:assembly').status, 'done');
+});
+
+test('large revision requests are explicitly skipped for human review, without imaginary recheck', () => {
+  const graph = buildWorkflow(task({ status: 'PENDING_CONFIRMATION', result: { next_action: 'REVIEW_DELIVERABLE', data: {} } }),
+    [event('review.feedback', { feedback: '修改四章' }), event('revision.deferred', { reason: '超过上限' }), event('review.completed', { decision: 'REVISE' })]);
+  assert.equal(get(graph, 'sys:revision').status, 'skipped');
+  assert.equal(get(graph, 'sys:recheck'), undefined);
+  assert.equal(get(graph, 'sys:human').status, 'warning');
+});
+
+test('memory stage is traceable and does not survive into a new retry without an event', () => {
+  const events = [event('task.attempt.started'), event('memory.loaded', { turn_count: 2, memory_count: 1 }), event('planner.started')];
+  const graph = buildWorkflow(task(), events);
+  assert.equal(get(graph, 'sys:memory').output.turn_count, 2);
+  assert.deepEqual(get(graph, 'sys:planner').depends, ['sys:memory']);
+  assert.equal(get(buildWorkflow(task(), [...events, event('task.attempt.started')]), 'sys:memory'), undefined);
+});
+
 test('parallel workers share a column; unordered dependencies still flow forward', () => {
   const plan = [step('delivery', ['a', 'b']), step('b'), step('a')];
   const graph = buildWorkflow(task({ plan }), [event('plan.created', { plan }), event('agent.node.started', { node_id: 'a' }), event('agent.node.started', { node_id: 'b' })]);

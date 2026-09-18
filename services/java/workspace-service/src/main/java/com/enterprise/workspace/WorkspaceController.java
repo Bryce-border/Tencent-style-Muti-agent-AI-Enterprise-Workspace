@@ -47,23 +47,23 @@ public class WorkspaceController {
         dashboard.put("reports",db.queryForObject("SELECT COUNT(*) FROM reports WHERE workspace_id=?",Integer.class,actor.workspaceId()));
         return dashboard;
     }
-    @GetMapping("/v1/tasks") Object list(@AuthenticationPrincipal Identity actor,@RequestParam(defaultValue="20") int limit) { return tasks.list(actor.workspaceId(),limit).stream().map(CitationView::task).toList(); }
+    @GetMapping("/v1/tasks") Object list(@AuthenticationPrincipal Identity actor,@RequestParam(defaultValue="20") int limit) { return tasks.visibleList(actor,limit).stream().map(CitationView::task).toList(); }
     @PostMapping("/v1/tasks") ResponseEntity<?> create(@AuthenticationPrincipal Identity actor,@RequestBody ObjectNode body,@RequestHeader(value="Idempotency-Key",required=false) String key) {
         actor.requireWrite(); String prompt=body.path("prompt").asText(), employee=body.path("employee_id").asText("ai_assistant");
         if (prompt.isBlank() || prompt.length()>4000 || !EMPLOYEES.contains(employee)) throw new ResponseStatusException(BAD_REQUEST,"请提供有效员工与1至4000字的工作目标");
         var task=tasks.create(actor.workspaceId(),prompt,employee,key); identities.audit(actor,"task.create",task.path("task_id").asText());
         return ResponseEntity.accepted().body(task);
     }
-    @GetMapping("/v1/tasks/{id}") Object get(@AuthenticationPrincipal Identity actor,@PathVariable String id) { return CitationView.task(tasks.owned(id,actor.workspaceId())); }
-    @PostMapping("/v1/tasks/{id}/{action:cancel|confirm}") Object action(@AuthenticationPrincipal Identity actor,@PathVariable String id,@PathVariable String action) {
-        actor.requireWrite(); var task=tasks.action(id,actor.workspaceId(),action); identities.audit(actor,"task."+action,id); return CitationView.task(task);
+    @GetMapping("/v1/tasks/{id}") Object get(@AuthenticationPrincipal Identity actor,@PathVariable String id) { return CitationView.task(tasks.visible(id,actor)); }
+    @PostMapping("/v1/tasks/{id}/{action:cancel|confirm|retry}") Object action(@AuthenticationPrincipal Identity actor,@PathVariable String id,@PathVariable String action) {
+        actor.requireWrite(); tasks.visible(id,actor); var task=action.equals("retry")?tasks.retryDocument(id,actor.workspaceId()):tasks.action(id,actor.workspaceId(),action); identities.audit(actor,"task."+action,id); return CitationView.task(task);
     }
     @GetMapping("/v1/tasks/{id}/events") Object events(@AuthenticationPrincipal Identity actor,@PathVariable String id,@RequestParam(defaultValue="0") long after) {
-        tasks.owned(id,actor.workspaceId()); return tasks.events(id,Math.max(0,after));
+        tasks.visible(id,actor); return tasks.events(id,Math.max(0,after));
     }
     @GetMapping(value="/v1/tasks/{id}/stream",produces=MediaType.TEXT_EVENT_STREAM_VALUE)
     SseEmitter stream(@AuthenticationPrincipal Identity actor,@PathVariable String id,@RequestHeader(value="Last-Event-ID",defaultValue="0") String last) {
-        tasks.owned(id,actor.workspaceId()); long cursor;
+        tasks.visible(id,actor); long cursor;
         try { cursor=Long.parseLong(last); } catch (NumberFormatException ex) { cursor=0; }
         final long initial=Math.max(0,cursor); var emitter=new SseEmitter(30000L);
         Thread.startVirtualThread(()->{
@@ -72,18 +72,18 @@ public class WorkspaceController {
                 for(int turn=0;turn<50;turn++) {
                     identities.identity(actor.userId(),actor.workspaceId());
                     for(var event:tasks.events(id,position)) { position=((Number)event.get("id")).longValue(); emitter.send(SseEmitter.event().id(Long.toString(position)).data(event)); }
-                    if (!List.of("PENDING","RUNNING").contains(tasks.owned(id,actor.workspaceId()).path("status").asText())) break;
+                    if (!List.of("PENDING","RUNNING").contains(tasks.visible(id,actor).path("status").asText())) break;
                     Thread.sleep(500);
                 }
                 emitter.complete();
             } catch (Exception ex) { emitter.completeWithError(ex); }
         }); return emitter;
     }
-    @GetMapping("/v1/messages") Object messages(@AuthenticationPrincipal Identity actor) { return tasks.messages(actor.workspaceId()); }
-    @GetMapping("/v1/reports") Object reports(@AuthenticationPrincipal Identity actor) { return tasks.reports(actor.workspaceId()); }
-    @GetMapping("/v1/reports/{id}") Object report(@AuthenticationPrincipal Identity actor,@PathVariable String id) { return tasks.report(id,actor.workspaceId()); }
+    @GetMapping("/v1/messages") Object messages(@AuthenticationPrincipal Identity actor) { return tasks.messages(actor); }
+    @GetMapping("/v1/reports") Object reports(@AuthenticationPrincipal Identity actor) { return tasks.reports(actor); }
+    @GetMapping("/v1/reports/{id}") Object report(@AuthenticationPrincipal Identity actor,@PathVariable String id) { tasks.visible(id,actor); return tasks.report(id,actor.workspaceId()); }
     @GetMapping("/v1/tasks/{id}/export") ResponseEntity<String> export(@AuthenticationPrincipal Identity actor,@PathVariable String id) {
-        var task=CitationView.task(tasks.owned(id,actor.workspaceId())); var result=task.path("result");
+        var task=CitationView.task(tasks.visible(id,actor)); var result=task.path("result");
         if (result.isNull() || result.isMissingNode()) throw new ResponseStatusException(CONFLICT,"任务尚未产生结果");
         String content="# "+task.path("prompt").asText()+"\n\n- 任务 ID：`"+id+"`\n- 状态：`"+task.path("status").asText()+"`\n\n## 结果\n\n"+result.path("data").path("output").asText()+"\n";
         if (result.path("citations").isArray() && !result.path("citations").isEmpty()) {

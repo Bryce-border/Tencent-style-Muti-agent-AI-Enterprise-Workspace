@@ -33,6 +33,9 @@ class FoundationTests {
     @Autowired JdbcTemplate db;
     @Autowired ModelSettingsService models;
     @Autowired DocumentService documents;
+    @Autowired ConversationService conversations;
+    @Autowired IdentityService identities;
+    @Autowired OutputPreviewService previews;
     @MockitoBean StringRedisTemplate redis;
     @MockitoBean RuntimeClient runtime;
     private final Map<String,String> sessions=new ConcurrentHashMap<>();
@@ -58,6 +61,119 @@ class FoundationTests {
             .content("{\"prompt\":\"test local task\",\"employee_id\":\"document_expert\",\"workspace_id\":\"default\"}"))
             .andExpect(status().isAccepted()).andReturn();
         return (ObjectNode)json.readTree(response.getResponse().getContentAsString());
+    }
+    IdentityService.Identity identity(Account account) {
+        String user=db.queryForObject("SELECT id FROM users WHERE username=?",String.class,account.username());
+        return identities.identity(user,account.space());
+    }
+    ObjectNode samplePreview() {
+        var draft=json.createObjectNode().put("title","星舟项目方案").put("output_type","项目方案").put("length","约500字").put("style","专业简洁").put("format","Markdown").put("notes","模拟业务资料");
+        draft.putArray("sections").add("目标与范围").add("验收标准");return draft;
+    }
+    @Test void outputPreviewRequiresApprovalAndRejectsStaleVersions() throws Exception {
+        var a=identity(account());String id=(String)conversations.create(a,"新会话","ai_assistant").get("id");
+        when(runtime.call(eq("/v1/output-preview"),any(),eq(55))).thenReturn(samplePreview());
+        previews.generate(a,id,json.createObjectNode().put("goal","设计星舟项目").put("revision",0));
+        assertEquals(0,db.queryForObject("SELECT COUNT(*) FROM conversation_turns WHERE conversation_id=?",Integer.class,id));
+        var edited=samplePreview().put("revision",1).put("style","中文简短");previews.edit(a,id,edited);
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->previews.approve(a,id,1));
+        var task=previews.approve(a,id,2);String taskId=task.path("task_id").asText();
+        assertEquals(taskId,previews.approve(a,id,2).path("task_id").asText());
+        assertEquals(1,db.queryForObject("SELECT COUNT(*) FROM task_outbox WHERE task_id=?",Integer.class,taskId));
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->previews.edit(a,id,edited.put("revision",2)));
+        String lease=UUID.randomUUID().toString();tasks.claim(taskId,lease);
+        assertEquals("中文简短",((ObjectNode)conversations.context(taskId,lease).get("output_spec")).path("style").asText());
+        assertTrue(conversations.owned(a,id,false).get("title").toString().contains("星舟"));
+    }
+    @Test void slowPreviewCannotOverwriteApprovedPlan() throws Exception {
+        var a=identity(account());String id=(String)conversations.create(a,"新会话","ai_assistant").get("id");
+        when(runtime.call(eq("/v1/output-preview"),any(),eq(55))).thenReturn(samplePreview());
+        previews.generate(a,id,json.createObjectNode().put("goal","模拟项目").put("revision",0));
+        when(runtime.call(eq("/v1/output-preview"),any(),eq(55))).thenAnswer(invocation->{previews.approve(a,id,1);return samplePreview();});
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->previews.generate(a,id,json.createObjectNode().put("goal","模拟项目").put("changes","调整结构").put("revision",1)));
+        assertNotNull(conversations.owned(a,id,false).get("approved_task_id"));
+        assertEquals(1,db.queryForObject("SELECT COUNT(*) FROM conversation_turns WHERE conversation_id=?",Integer.class,id));
+    }
+    @Test void chapterModeAndCheckpointRemainBoundToOwnedLeasedTask() throws Exception {
+        var account=account(); var a=identity(account); var b=account();
+        String id=(String)conversations.create(a,"分章验收","ai_assistant").get("id");
+        when(runtime.call(eq("/v1/output-preview"),any(),eq(55))).thenReturn(samplePreview().put("generation_mode","chapters"));
+        previews.generate(a,id,json.createObjectNode().put("goal","生成分章方案").put("revision",0));
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->previews.edit(a,id,samplePreview().put("revision",1).put("generation_mode","invalid")));
+        String tid=previews.approve(a,id,1).path("task_id").asText();String lease=UUID.randomUUID().toString();tasks.claim(tid,lease);
+        assertEquals("chapters",((ObjectNode)conversations.context(tid,lease).get("output_spec")).path("generation_mode").asText());
+        var checkpoint=json.createObjectNode().put("binding","private-binding");checkpoint.putArray("chapters").addObject().put("content","私人章节");
+        assertTrue(tasks.workerEvent(tid,lease,"document.checkpoint",checkpoint));
+        assertEquals(checkpoint,conversations.context(tid,lease).get("document_checkpoint"));
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->conversations.context(tid,"wrong-lease"));
+        mvc.perform(get("/v1/tasks/"+tid+"/events").cookie(b.cookie())).andExpect(status().isNotFound());
+        mvc.perform(post("/v1/tasks/"+tid+"/retry").cookie(b.cookie()).header("X-Workspace-Request","1")).andExpect(status().isNotFound());
+        var task=tasks.get(tid);task.put("status","FAILED");task.putObject("result").putObject("data").put("generation_mode","chapters");tasks.save(tid,lease,task);
+        assertEquals("PENDING",tasks.retryDocument(tid,a.workspaceId()).path("status").asText());
+        assertEquals("PENDING",tasks.retryDocument(tid,a.workspaceId()).path("status").asText());
+        assertEquals(1,tasks.events(tid,0).stream().filter(e->e.get("type").equals("task.retry.requested")).count());
+        String next=UUID.randomUUID().toString();assertTrue(tasks.claim(tid,next));
+        assertFalse(tasks.workerEvent(tid,lease,"document.checkpoint",checkpoint));
+        assertEquals(checkpoint,conversations.context(tid,next).get("document_checkpoint"));
+        task=tasks.get(tid);task.put("status","FAILED");tasks.save(tid,next,task);
+        previews.generate(a,id,json.createObjectNode().put("goal","重新规划文档").put("revision",1));
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->tasks.retryDocument(tid,a.workspaceId()));
+    }
+    @Test void archivedConversationsAndDisabledMemoriesRespectScope() throws Exception {
+        var a=identity(account());var b=identity(account());String id=(String)conversations.create(a,"新会话","ai_assistant").get("id");
+        conversations.update(a,id,"新名称",true);
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->conversations.submit(a,id,"目标","request-archive"));
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->conversations.update(b,id,"越权",false));
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->previews.approve(b,id,0));
+        conversations.update(a,id,null,false);
+        var m=conversations.remember(a,"ai_assistant","preference","简短回答",null);String mid=(String)m.get("id");
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->conversations.updateMemory(b,mid,"越权",false));
+        conversations.updateMemory(a,mid,"中文回答",false);
+        String task=conversations.submit(a,id,"继续测试","memory-check").path("task_id").asText();String lease=UUID.randomUUID().toString();tasks.claim(task,lease);
+        assertTrue(((List<?>)conversations.context(task,lease).get("memories")).isEmpty());
+        conversations.updateMemory(a,mid,null,true);
+        assertTrue(conversations.context(task,lease).get("memories").toString().contains("中文回答"));
+    }
+    @Test void memoryIsScopedAndConversationSubmissionIsIdempotent() throws Exception {
+        var account=account(); var a=identity(account); var b=identity(account());
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->conversations.create(a,"invalid",null));
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->conversations.remember(a,"ai_assistant",null,"invalid",null));
+        String c=(String)conversations.create(a,"多轮工作","ai_assistant").get("id");
+        var m=conversations.remember(a,"ai_assistant","preference","使用中文简洁输出",null);
+        assertEquals(m.get("id"),conversations.remember(a,"ai_assistant","preference","使用中文简洁输出",null).get("id"));
+        assertTrue(conversations.memories(a,"data_analyst").isEmpty());
+        assertTrue(conversations.memories(b,"ai_assistant").isEmpty());
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->conversations.detail(b,c));
+        var t=conversations.submit(a,c,"请帮我整理需求","request-0001"); String id=t.path("task_id").asText();
+        assertEquals(id,conversations.submit(a,c,"请帮我整理需求","request-0001").path("task_id").asText());
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->conversations.submit(a,c,"另一个目标","request-0002"));
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->conversations.context(id,"wrong-lease"));
+        String lease=UUID.randomUUID().toString(); assertTrue(tasks.claim(id,lease));
+        assertEquals(1,((List<?>)conversations.context(id,lease).get("memories")).size());
+        conversations.forget(a,(String)m.get("id"));
+        assertTrue(((List<?>)conversations.context(id,lease).get("memories")).isEmpty());
+        assertThrows(org.springframework.web.server.ResponseStatusException.class,()->conversations.remember(b,"ai_assistant","fact","偷用来源",id));
+    }
+    @Test void privateConversationTasksDoNotLeakThroughWorkspaceEndpoints() throws Exception {
+        var account=account(); var a=identity(account); var other=account();
+        identities.addMember(a,other.username(),"MEMBER");
+        var cookie=mvc.perform(post("/auth/workspace").cookie(other.cookie()).header("X-Workspace-Request","1").contentType("application/json")
+            .content(json.writeValueAsString(Map.of("workspace_id",a.workspaceId())))).andExpect(status().isOk()).andReturn().getResponse().getCookie("workspace_session");
+        String c=(String)conversations.create(a,"隐私工作","ai_assistant").get("id");
+        String id=conversations.submit(a,c,"请整理个人工作目标","private-0001").path("task_id").asText();
+        for(String suffix:new String[]{"","/events","/stream","/export"}) mvc.perform(get("/v1/tasks/"+id+suffix).cookie(cookie)).andExpect(status().isNotFound());
+        mvc.perform(get("/v1/conversations/"+c).cookie(cookie)).andExpect(status().isNotFound());
+        for(String path:new String[]{"/v1/tasks","/v1/messages","/v1/reports","/v1/conversations","/v1/memories"})
+            mvc.perform(get(path).cookie(cookie)).andExpect(content().json("[]"));
+        mvc.perform(post("/v1/tasks/"+id+"/cancel").cookie(cookie).header("X-Workspace-Request","1")).andExpect(status().isNotFound());
+        String lease=UUID.randomUUID().toString(); tasks.claim(id,lease);
+        var incoming=tasks.get(id); incoming.put("status","SUCCESS"); incoming.putObject("result").putObject("data").put("mode","crewai").put("output","个人交付内容"); tasks.save(id,lease,incoming);
+        mvc.perform(get("/v1/reports").cookie(cookie)).andExpect(content().json("[]"));
+        mvc.perform(get("/v1/reports/"+id).cookie(cookie)).andExpect(status().isNotFound());
+        String next=conversations.submit(a,c,"沿用之前偏好继续","private-0002").path("task_id").asText();
+        String nextLease=UUID.randomUUID().toString();tasks.claim(next,nextLease);
+        var history=(List<?>)conversations.context(next,nextLease).get("turns");assertEquals(1,history.size());
+        assertTrue(history.toString().contains("个人交付内容"));
     }
     @Test void unauthenticatedAndInternalRequestsAreRejected() throws Exception {
         mvc.perform(get("/v1/tasks")).andExpect(status().isUnauthorized());

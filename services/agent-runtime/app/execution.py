@@ -9,6 +9,8 @@ from .config import Settings
 from .employees import list_employees
 from .knowledge import KnowledgeStore, cited_sources, input_only
 from .schemas import Task, TaskResult
+from .memory import memory_context
+from .telemetry import record_usage
 
 
 EMPLOYEE_IDS = {employee["employee_id"] for employee in list_employees()}
@@ -95,9 +97,10 @@ class WorkspaceRuntime:
         model = self.settings.llm_model
         llm_args = {"model": model if "/" in model else f"openai/{model}",
             "base_url": self.settings.llm_base_url, "api_key": self.settings.llm_api_key,
-            "timeout": 90, "max_tokens": min(self.settings.llm_max_tokens, 450 if schema is Review else 1100 if schema else self.settings.llm_max_tokens)}
+            "timeout": 90, "max_retries": 0, "max_tokens": min(self.settings.llm_max_tokens,
+                450 if schema is Review else self.settings.llm_max_tokens if schema and schema.__name__ == "ChapterDraft" else 1100 if schema else self.settings.llm_max_tokens)}
         # Kimi K3 rejects the OpenAI temperature parameter entirely.
-        if not model.lower().startswith("kimi-k3"):
+        if not model.rsplit("/", 1)[-1].lower().startswith("kimi-k3"):
             llm_args["temperature"] = self.settings.llm_temperature
         llm = LLM(**llm_args)
         employee = next(item for item in list_employees() if item["employee_id"] == employee_id)
@@ -108,6 +111,7 @@ class WorkspaceRuntime:
         work = CrewTask(description=description, expected_output=expected,
             agent=agent, **({"output_pydantic": schema} if schema else {}))
         result = Crew(agents=[agent], tasks=[work], process=Process.sequential, verbose=False).kickoff()
+        record_usage(getattr(result, "token_usage", None))
         if schema:
             return result.pydantic or parse_structured(str(result), schema)
         output = str(result).strip()
@@ -115,7 +119,7 @@ class WorkspaceRuntime:
             raise ValueError("empty worker output")
         return output
 
-    async def execute(self, task: Task, on_event=None, is_cancelled=None) -> TaskResult:
+    async def execute(self, task: Task, on_event=None, is_cancelled=None, context=None) -> TaskResult:
         def emit(name, payload):
             if on_event:
                 on_event(name, payload)
@@ -136,6 +140,15 @@ class WorkspaceRuntime:
                 error="此任务涉及外部写入，当前未配置执行连接器。可取消任务或改为生成草稿。", next_action="CONNECTOR_REQUIRED")
 
         check_cancelled()
+        specification = (context or {}).get("output_spec")
+        if specification and specification.get("generation_mode") == "chapters":
+            from .long_document import execute_document
+            return await execute_document(self, task, specification, context or {}, emit, check_cancelled)
+        history = memory_context(context, task.prompt)
+        requirements = "\n用户已批准的输出约定（按此目录、格式与要求交付，仍不得违反权限或编造数据）：" + json.dumps(specification, ensure_ascii=False) if specification else ""
+        emit("memory.loaded", {"turn_count": len((context or {}).get("turns", [])) if history else 0,
+                               "memory_count": len((context or {}).get("memories", [])) if history else 0,
+                               "characters": len(history), "scope": "workspace_user_agent"})
         plan = self.fallback_plan(task)
         plan_source = "employee" if task.employee_id != "ai_assistant" else "fallback"
         if task.employee_id == "ai_assistant":
@@ -145,7 +158,7 @@ class WorkspaceRuntime:
                 plan = await asyncio.to_thread(self._call, "ai_assistant",
                     "请为目标生成最小协作计划。只使用以下员工，不执行外部操作。独立工作可并行，有信息依赖必须填写 depends_on。"
                     "用 1 至 3 个节点，不包含最终汇总节点（系统负责）。\n员工目录：" + json.dumps(catalog, ensure_ascii=False)
-                    + "\n用户目标：" + task.prompt,
+                    + "\n用户目标：" + task.prompt + history + requirements,
                     "JSON 对象含 steps 数组，每项含 node_id、employee_id、objective、depends_on。", ExecutionPlan)
                 plan = ExecutionPlan.model_validate(plan.model_dump())
                 plan_source = "supervisor"
@@ -174,7 +187,7 @@ class WorkspaceRuntime:
             "实际引用相关片段时用 [来源: chunkId] 标注（填入片段的实际 chunkId），未引用的候选不得列为依据。"
             "metadata.simulated 为 true 的资料是模拟业务制度，回答中必须明确标注模拟制度。"
             "标注缺失信息和假设。不执行或声称已经完成邮件发送、数据库写入、代码运行、文件读取等外部操作。"
-            "不得编造企业事实、统计数据或来源。\n用户目标：" + task.prompt + "\n检索证据：" + evidence)
+            "不得编造企业事实、统计数据或来源。\n用户目标：" + task.prompt + "\n检索证据：" + evidence + history + requirements)
         results: dict[str, dict] = {}
         limit = asyncio.Semaphore(2)
 

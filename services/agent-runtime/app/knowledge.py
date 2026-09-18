@@ -41,7 +41,7 @@ def cited_sources(output: str, candidates: list[dict]) -> list[dict]:
 
 
 def input_only(prompt: str) -> bool:
-    return bool(re.search(r"(?:仅|只)(?:根据|依据|使用|基于)(?:以下|下列|上述|所给|提供的|我提供|用户提供)|不要(?:检索|搜索)|不(?:使用|引用)(?:知识库|外部)", prompt))
+    return bool(re.search(r"(?:仅|只)(?:根据|依据|使用|基于)(?:以下|下列|上述|所给|(?:本次|当前)(?:资料|提供|输入|所给)|提供的|我提供|用户提供)|不要(?:检索|搜索)|不(?:使用|引用)(?:知识库|外部)", prompt))
 
 
 class EmbeddingProvider:

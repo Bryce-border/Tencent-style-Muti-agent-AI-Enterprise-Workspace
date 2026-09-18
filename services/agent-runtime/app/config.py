@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     database_path: str = "/data/workspace.db"
     cors_origins: str = "*"
     max_task_seconds: int = 300
+    max_document_seconds: int = Field(default=1200, ge=60, le=3600)
     max_task_retries: int = 2
     task_queue_name: str = "enterprise.tasks"
     task_queue_enabled: bool = True

@@ -39,6 +39,21 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.engine = WorkspaceRuntime(Settings(llm_model="test-model", llm_api_key="test-only", _env_file=None))
 
+    async def test_private_memory_reaches_workers_and_review_without_snapshot_persistence(self):
+        calls, events = [], []
+        def worker(employee, description, expected, schema=None):
+            calls.append(description)
+            return Review(decision="PASS", feedback="通过") if schema == Review else "本轮交付"
+        task = Task(workspace_id="tenant-a", prompt="继续上次的文档工作", employee_id="document_expert")
+        context = {"turns": [{"task_id": "T-previous", "user": "项目代号星舟", "assistant": "历史规划"}],
+                   "memories": [{"id": "M-pref", "kind": "preference", "content": "先列结论再列依据"}]}
+        with patch.object(self.engine, "_call", side_effect=worker), patch("app.execution.KnowledgeStore.search", new_callable=AsyncMock, return_value=[]):
+            result = await self.engine.execute(task, lambda name, payload: events.append((name, payload)), context=context)
+        self.assertEqual(result.status, "SUCCESS")
+        self.assertTrue(all("项目代号星舟" in call and "先列结论再列依据" in call for call in calls))
+        self.assertNotIn("项目代号星舟", task.model_dump_json())
+        self.assertNotIn("先列结论再列依据", json.dumps(events, ensure_ascii=False))
+
     async def test_actual_handoff_and_review_revisions(self):
         calls = []
         events = []

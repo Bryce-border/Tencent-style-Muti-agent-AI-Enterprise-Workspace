@@ -51,6 +51,7 @@ export function Documents() {
   const [versionFor, setVersionFor] = useState<string | undefined>();
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
   useEffect(() => {
     if (!requestedId) return;
     let stopped = false;
@@ -124,8 +125,8 @@ export function Documents() {
     <>
       <div className="page-heading">
         <div>
-          <h1>Documents</h1>
-          <p>文件、版本与知识索引</p>
+          <h1>我的知识文件</h1>
+          <p>上传、解析和管理工作空间资料</p>
           <small>支持 TXT、Markdown、CSV、PDF、DOCX、XLSX，单文件不超过 5 MB。</small>
         </div>
         <Button
@@ -146,6 +147,7 @@ export function Documents() {
           onChange={(e) => void upload(e)}
         />
       </div>
+      <label className="gui-file-search"><input aria-label="搜索知识文件" placeholder="按文件名搜索…" value={query} onChange={e=>setQuery(e.target.value)}/></label>
       {error && (
         <p role="alert" className="error">
           {error}
@@ -159,7 +161,7 @@ export function Documents() {
         <p>暂无文档，上传后会自动解析并建立检索索引。</p>
       ) : (
         <div className="document-list">
-          {docs.data.map((doc) => (
+          {docs.data.filter(doc=>`${doc.title} ${doc.filename}`.toLowerCase().includes(query.toLowerCase())).map((doc) => (
             <article className="document-row" key={doc.id}>
               <FileText size={21} />
               <div className="document-main">
@@ -172,6 +174,7 @@ export function Documents() {
                 <small>
                   {doc.filename} · v{doc.latest_version} ·{" "}
                   {doc.byte_size ? `${Math.ceil(doc.byte_size / 1024)} KB` : ""}
+                  {doc.status === "READY" ? ` · ${doc.chunk_count ?? 0} 个知识分块` : ""}
                 </small>
               </div>
               <span className="small-badge">
@@ -252,6 +255,7 @@ export function Documents() {
                   <FileDown size={15} />
                 </a>
               </summary>
+              <p className="gui-document-meta">{Math.ceil(v.byte_size/1024)} KB · {v.chunk_count} 个索引分块 · {v.status === "READY" ? "解析与索引已完成" : statusNames[v.status] || v.status}</p>
               {v.error ? (
                 <p className="error">{v.error}</p>
               ) : (

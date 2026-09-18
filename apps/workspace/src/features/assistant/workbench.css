@@ -1,0 +1,128 @@
+.conversation-bar {
+  display: flex;
+  gap: 12px;
+  margin: 20px 0;
+  flex-wrap: wrap;
+}
+.conversation-bar select {
+  max-width: 420px;
+  min-width: 200px;
+}
+.workbench-columns {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.3fr) minmax(
+      260px,
+      0.8fr
+    );
+  gap: 16px;
+  align-items: start;
+}
+.workbench-columns > section,
+.workbench-artifacts {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--border, #dedfe8);
+  border-radius: 16px;
+  background: var(--card, rgba(255, 255, 255, 0.7));
+}
+.workbench-columns h2 {
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+.conversation-turns {
+  max-height: 58vh;
+  overflow: auto;
+}
+.turn {
+  padding: 16px 10px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.turn.selected {
+  background: rgba(100, 100, 220, 0.04);
+}
+.turn-heading {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  font-size: 14px;
+}
+.turn-heading span {
+  white-space: nowrap;
+  font-size: 12px;
+}
+.turn-heading strong {
+  overflow-wrap: anywhere;
+}
+.turn .markdown {
+  font-size: 13px;
+  margin: 14px 0;
+}
+.turn a,
+.workbench-artifacts a {
+  color: #5753bb;
+  font-size: 13px;
+}
+.workbench-execution .flow-header {
+  flex-direction: column;
+  align-items: flex-start;
+}
+.workbench-execution .flow-tools {
+  flex-wrap: wrap;
+}
+.workbench-execution .workflow {
+  border: 0;
+}
+.workbench-execution .flow-viewport {
+  min-height: 360px;
+}
+.artifact-preview {
+  max-height: 34vh;
+  overflow: auto;
+  margin: 16px 0;
+  font-size: 13px;
+}
+.memory-panel {
+  margin-top: 24px;
+  border-top: 1px solid #ddd;
+  padding-top: 18px;
+}
+.memory-panel p,
+.muted {
+  font-size: 12px;
+  color: #666;
+  line-height: 1.7;
+}
+.memory-panel form {
+  display: grid;
+  gap: 8px;
+}
+.memory-panel article {
+  padding: 12px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+.workbench-columns textarea,
+.memory-panel select {
+  width: 100%;
+}
+@media (max-width: 1450px) {
+  .workbench-columns {
+    grid-template-columns: minmax(300px, 1fr) minmax(360px, 1fr);
+  }
+  .workbench-artifacts {
+    grid-column: 1/-1;
+  }
+}
+@media (max-width: 850px) {
+  .workbench-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .workbench-artifacts {
+    grid-column: auto;
+  }
+  .conversation-bar select {
+    width: 100%;
+    max-width: none;
+  }
+}

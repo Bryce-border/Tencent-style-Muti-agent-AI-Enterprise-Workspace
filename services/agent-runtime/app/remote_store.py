@@ -39,6 +39,9 @@ class RemoteTaskStore:
     def model_settings(self, task_id: str) -> dict:
         return self._request("GET", task_id, "/model-settings")
 
+    def context(self, task_id: str) -> dict:
+        return self._request("GET", task_id, "/context")
+
     def save(self, task: Task) -> bool:
         return self._request("PUT", task.task_id, body=task.model_dump(mode="json"))["ok"]
 

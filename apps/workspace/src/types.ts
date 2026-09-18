@@ -33,6 +33,15 @@ export interface Task {
     data: {
       output?: unknown;
       mode?: string;
+      generation_mode?: "single" | "chapters";
+      document?: {
+        title: string;
+        total: number;
+        complete: boolean;
+        chapters: Array<{ chapter_id: string; title: string; content: string; summary: string }>;
+        brief: Record<string, string[]>;
+      };
+      metrics?: { agent_calls: number; failed_calls: number; reused_chapters: number; reported_tokens: number; usage_reported_calls: number; elapsed_ms: number; model: string };
       node_results?: Array<Step & { output: unknown; citations?: Citation[] }>;
       review?: { decision: string; feedback: string };
     };
